@@ -19,17 +19,9 @@ def is_valid_ip(ip):
 def _ping_ip(ip, timeout=2):
     """Проверяет доступность IP-адреса через ping с кэшированием"""
     try:
-        if platform.system().lower() == 'windows':
-            command = ['ping', '-n', '1', '-w', str(timeout * 1000), ip]
-        else:
-            command = ['ping', '-c', '1', '-W', str(timeout), ip]
-
-        return subprocess.call(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout + 1  # Добавляем запас времени
-        ) == 0
+        command = ['ping', '-c', '1', '-W', str(timeout), ip] if platform.system().lower() != 'windows' else \
+                  ['ping', '-n', '1', '-w', str(timeout * 1000), ip]
+        return subprocess.call(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout + 1) == 0
     except (subprocess.TimeoutExpired, Exception):
         return False
 
@@ -58,61 +50,33 @@ def detect_os(ip, timeout=3):
     if not is_valid_ip(ip):
         return "Неверный IP"
 
+    if not _ping_ip(ip, timeout):
+        return "Недоступен"
+
+    ttl = None
     try:
-        if not _ping_ip(ip, timeout):
-            return "Недоступен"
-
-        # Перенесем весь код в блок try
+        with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP) as s:
+            s.settimeout(2)
+            packet = struct.pack('!BBHHH', 8, 0, 0, 0, 0)
+            s.sendto(packet, (ip, 1))
+            response = s.recvfrom(256)[0]
+            ttl = response[8]
+    except (PermissionError, socket.error):
         ttl = None
-        try:
-            # Проверка прав администратора
-            if platform.system().lower() == 'windows' and not ctypes.windll.shell32.IsUserAnAdmin():
-                raise PermissionError("Требуются права администратора")
 
-            with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP) as s:
-                s.settimeout(2)
-                packet = struct.pack('!BBHHH', 8, 0, 0, 0, 0)
-                s.sendto(packet, (ip, 1))
-                response = s.recvfrom(256)[0]
-                ttl = response[8]
-        except PermissionError as e:
-            print(f"Ошибка прав: {str(e)}")
-            ttl = None
-        except socket.error as e:
-            print(f"Ошибка сокета: {str(e)}")
-            ttl = None
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP) as s:
-                s.settimeout(2)
-                packet = struct.pack('!BBHHH', 8, 0, 0, 0, 0)
-                s.sendto(packet, (ip, 1))
-                response = s.recvfrom(256)[0]
-                ttl = response[8]
-        except (PermissionError, socket.error):
-            pass
+    port_results = {22: _check_tcp_port(ip, 22), 3389: _check_tcp_port(ip, 3389)}
 
-        port_results = {
-            22: _check_tcp_port(ip, 22),
-            3389: _check_tcp_port(ip, 3389)
-        }
-
-        if ttl:
-            os_guess = _get_os_via_ttl(ttl)
-            if "Windows" in os_guess and port_results[3389]:
-                return "Windows"
-            if "Linux" in os_guess and port_results[22]:
-                return "Linux"
-            return os_guess
-
-        if port_results[3389]:
+    if ttl:
+        os_guess = _get_os_via_ttl(ttl)
+        if "Windows" in os_guess and port_results[3389]:
             return "Windows"
-        if port_results[22]:
+        if "Linux" in os_guess and port_results[22]:
             return "Linux"
+        return os_guess
 
-        return "Неизвестно"
+    if port_results[3389]:
+        return "Windows"
+    if port_results[22]:
+        return "Linux"
 
-    except (socket.timeout, subprocess.TimeoutExpired):
-        return "Таймаут проверки"
-    except Exception as e:
-        print(f"Ошибка определения ОС: {str(e)}")
-        return "Ошибка проверки"
+    return "Неизвестно"

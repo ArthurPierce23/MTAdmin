@@ -1,3 +1,4 @@
+import shutil
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QMenuBar, QMenu, QLabel, QTabWidget, QPushButton,
@@ -13,7 +14,9 @@ from database.db_manager import (
     add_to_workstation_map, get_workstation_map, init_db
 )
 from main_gui.utils import is_valid_ip, detect_os
-
+from database.db_manager import remove_from_workstation_map, clear_recent_connections  # Добавляем функцию удаления
+from PySide6.QtWidgets import QFileDialog, QDialogButtonBox, QSpinBox
+from settings import load_settings, save_settings, SETTINGS_FILE  # Правильный импорт
 
 class ConnectionThread(QThread):
     finished = Signal(str, str, str)  # ip, os_name, error
@@ -97,6 +100,11 @@ class MainWindow(QMainWindow):
 
         self._init_ui()
 
+    def _show_about_dialog(self):
+        """Показ информации о программе"""
+        about_text = "Здесь будет информация о программе"
+        QMessageBox.about(self, "О программе", about_text)
+
     def _show_notification(self, message, error=False):
         """Показывает уведомление в статусной строке"""
         self.notification_label.setStyleSheet("color: red;" if error else "color: green;")
@@ -129,18 +137,25 @@ class MainWindow(QMainWindow):
         settings_menu = menubar.addMenu("Настройки")
         theme_action = QAction("Тема", self)
         theme_action.triggered.connect(self._open_theme_dialog)
-        settings_menu.addAction(theme_action)
+
+        # Дополнительные настройки
+        self.advanced_settings_action = QAction("Дополнительные настройки", self)
+        self.advanced_settings_action.triggered.connect(self._open_settings_dialog)
+        settings_menu.addActions([theme_action, self.advanced_settings_action])
 
         # Меню "Экспорт/Импорт"
         export_menu = menubar.addMenu("Экспорт/Импорт")
-        export_action = QAction("Экспорт данных", self)
-        import_action = QAction("Импорт данных", self)
-        export_menu.addActions([export_action, import_action])
+        self.export_action = QAction("Экспорт данных", self)  # Используем self.
+        self.import_action = QAction("Импорт данных", self)  # Используем self.
+        self.export_action.triggered.connect(self._export_settings)  # Переносим сюда
+        self.import_action.triggered.connect(self._import_settings)  # Переносим сюда
+        export_menu.addActions([self.export_action, self.import_action])
 
         # Меню "Справка"
         help_menu = menubar.addMenu("Справка")
-        about_action = QAction("О программе", self)
-        help_menu.addAction(about_action)
+        self.about_action = QAction("О программе", self)  # Используем self.
+        self.about_action.triggered.connect(self._show_about_dialog)
+        help_menu.addAction(self.about_action)
 
     def _open_theme_dialog(self):
         """Открытие диалогового окна выбора темы"""
@@ -233,7 +248,7 @@ class MainWindow(QMainWindow):
         self._setup_connection_block(layout, tab)
 
         # Поиск
-        self._setup_search(layout)
+        self._setup_search(layout, tab)  # ✅ Передаём tab
 
         # Таблицы
         self._setup_tables(layout, tab)
@@ -266,45 +281,103 @@ class MainWindow(QMainWindow):
         connection_box.setLayout(conn_layout)
         layout.addWidget(connection_box)
 
-    def _setup_search(self, layout):
-        """Поля поиска"""
+    def _export_settings(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Экспорт настроек", "settings.json", "JSON Files (*.json)")
+        if path:
+            try:
+                shutil.copy(SETTINGS_FILE, path)  # Теперь переменная доступна
+            except Exception as e:
+                self._show_notification(f"Ошибка экспорта: {str(e)}", error=True)
+
+    def _import_settings(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Импорт настроек", "", "JSON Files (*.json)")
+        if path:
+            try:
+                shutil.copy(path, SETTINGS_FILE)  # Теперь переменная доступна
+                self.settings = load_settings()
+                self.apply_current_theme()
+                self._show_notification("Настройки успешно импортированы")
+            except Exception as e:
+                self._show_notification(f"Ошибка импорта: {str(e)}", error=True)
+
+    def _setup_search(self, layout, tab):
+        """Добавляет поля поиска по таблицам"""
         search_layout = QHBoxLayout()
 
-        self.search_recent = QLineEdit()
-        self.search_recent.setPlaceholderText("Поиск в недавних подключениях...")
+        # Поле поиска по недавним подключениям
+        search_recent = QLineEdit()
+        search_recent.setPlaceholderText("Поиск в недавних подключениях...")
+        search_recent.textChanged.connect(lambda text: self._filter_table(tab.recent_table, text))
 
-        self.search_map = QLineEdit()
-        self.search_map.setPlaceholderText("Поиск по карте РМ...")
+        # Поле поиска по карте рабочих мест
+        search_map = QLineEdit()
+        search_map.setPlaceholderText("Поиск по карте РМ...")
+        search_map.textChanged.connect(lambda text: self._filter_table(tab.workstation_table, text))
 
-        search_layout.addWidget(self.search_recent)
-        search_layout.addWidget(self.search_map)
+        search_layout.addWidget(search_recent)
+        search_layout.addWidget(search_map)
         layout.addLayout(search_layout)
+
+    def _filter_table(self, table, text):
+        """Фильтрует таблицу по введённому тексту"""
+        for row in range(table.rowCount()):
+            match = False
+            for col in range(table.columnCount()):
+                item = table.item(row, col)
+                if item and text.lower() in item.text().lower():
+                    match = True
+                    break
+            table.setRowHidden(row, not match)
 
     def _setup_tables(self, layout, tab):
         """Настройка таблиц"""
         tables_layout = QHBoxLayout()
 
-        # Таблица недавних подключений
+        # === Контейнер для "Недавних подключений" ===
+        recent_box = QGroupBox("Недавние подключения")
+        recent_layout = QVBoxLayout()
+
         tab.recent_table = QTableWidget(0, 2)
         tab.recent_table.setHorizontalHeaderLabels(["IP", "Дата"])
         tab.recent_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
-        # Таблица рабочих мест
+        # Кнопка очистки списка
+        clear_recent_btn = QPushButton("Очистить список")
+        clear_recent_btn.clicked.connect(lambda: self._clear_recent_connections(tab.recent_table))
+
+        recent_layout.addWidget(tab.recent_table)
+        recent_layout.addWidget(clear_recent_btn)
+        recent_box.setLayout(recent_layout)
+
+        # === Контейнер для "Карта РМ" ===
+        workstation_box = QGroupBox("Карта рабочих мест")
+        workstation_layout = QVBoxLayout()
+
         tab.workstation_table = QTableWidget(0, 4)
         tab.workstation_table.setHorizontalHeaderLabels(["РМ", "IP", "ОС", "Последнее подключение"])
         tab.workstation_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
-        # После создания tab.recent_table и tab.workstation_table:
+        # Добавляем контекстное меню (ПКМ -> Удалить)
+        tab.workstation_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        tab.workstation_table.customContextMenuRequested.connect(
+            lambda pos, t=tab: self._show_context_menu(t.workstation_table, pos)
+        )
+
+        workstation_layout.addWidget(tab.workstation_table)
+        workstation_box.setLayout(workstation_layout)
+
+        # === Добавляем контейнеры в основной layout ===
+        tables_layout.addWidget(recent_box)
+        tables_layout.addWidget(workstation_box)
+        layout.addLayout(tables_layout)
+
+        # === Подключаем обработчики двойного клика ===
         tab.recent_table.cellDoubleClicked.connect(
             lambda row, col, t=tab: self._handle_recent_double_click(row, col, t)
         )
         tab.workstation_table.cellDoubleClicked.connect(
             lambda row, col, t=tab: self._handle_workstation_double_click(row, col, t)
         )
-
-        tables_layout.addWidget(tab.recent_table)
-        tables_layout.addWidget(tab.workstation_table)
-        layout.addLayout(tables_layout)
 
     def _load_tab_data(self, tab):
         """Загрузка данных в таблицы вкладки"""
@@ -400,6 +473,83 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(apply_theme(self.current_theme) if self.current_theme != "Без темы" else "")
         self.repaint()
 
+    def _clear_recent_connections(self, table):
+        """Очищает недавние подключения"""
+        confirm = QMessageBox.question(self, "Очистка", "Вы уверены, что хотите очистить список?",
+                                       QMessageBox.Yes | QMessageBox.No)
+        if confirm == QMessageBox.Yes:
+            clear_recent_connections()  # Удаляем из БД
+            table.setRowCount(0)  # Чистим таблицу
+            self._show_notification("Список очищен", error=False)
+
+    def _show_context_menu(self, table, pos):
+        """Показывает контекстное меню"""
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return
+
+        menu = QMenu(self)
+        delete_action = QAction("Удалить", self)
+        delete_action.triggered.connect(lambda: self._delete_workstation_entry(table, index.row()))
+        menu.addAction(delete_action)
+        menu.exec(table.viewport().mapToGlobal(pos))
+
+    def _delete_workstation_entry(self, table, row):
+        """Удаляет выбранную запись из Карты РМ"""
+        ip_item = table.item(row, 1)
+        if ip_item:
+            ip = ip_item.text()
+            confirm = QMessageBox.question(self, "Удаление", f"Удалить {ip} из карты РМ?",
+                                           QMessageBox.Yes | QMessageBox.No)
+            if confirm == QMessageBox.Yes:
+                remove_from_workstation_map(ip)  # Удаляем из БД
+                table.removeRow(row)  # Удаляем строку из таблицы
+                self._show_notification(f"{ip} удален из Карты РМ", error=False)
+
+    def _open_settings_dialog(self):
+        dialog = SettingsDialog(self.settings)
+        if dialog.exec() == QDialog.Accepted:
+            new_settings = {
+                "theme": self.settings.get("theme"),
+                "timeout": dialog.timeout_input.value(),
+                "font_size": dialog.font_size.value()
+            }
+            save_settings(new_settings)
+            self.settings = new_settings
+            self._apply_font_settings()
+
+    def _apply_font_settings(self):
+        font = QApplication.font()
+        font.setPointSize(self.settings.get("font_size", 12))
+        QApplication.setFont(font)
+
+class SettingsDialog(QDialog):
+    def __init__(self, current_settings):
+        super().__init__()
+        self.setWindowTitle("Настройки приложения")
+        layout = QVBoxLayout()
+
+        # Таймаут подключения
+        self.timeout_input = QSpinBox()
+        self.timeout_input.setRange(1, 60)
+        self.timeout_input.setValue(current_settings.get("timeout", 5))
+        layout.addWidget(QLabel("Таймаут подключения (сек):"))
+        layout.addWidget(self.timeout_input)
+
+        # Размер шрифта
+        self.font_size = QSpinBox()
+        self.font_size.setRange(8, 20)
+        self.font_size.setValue(current_settings.get("font_size", 12))
+        layout.addWidget(QLabel("Размер шрифта:"))
+        layout.addWidget(self.font_size)
+
+        # Кнопки
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        self.setLayout(layout)
 
 if __name__ == "__main__":
     app = QApplication([])

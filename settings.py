@@ -1,10 +1,12 @@
 import json
 import os
 
-SETTINGS_FILE = "settings.json"
+SETTINGS_FILE = "settings.json"  # Должно быть определено
 
 DEFAULT_SETTINGS = {
-    "theme": "Без темы"
+    "theme": "Без темы",
+    "timeout": 5,
+    "font_size": 12
 }
 
 def load_settings():

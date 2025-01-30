@@ -17,3 +17,8 @@ def save_recent_connection(ip):
     history.append({"ip": ip, "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
     with open(HISTORY_FILE, "w", encoding="utf-8") as file:
         json.dump(history[-10:], file, indent=4, ensure_ascii=False)  # Храним последние 10
+
+def clear_recent_connections():
+    """Очищает файл истории подключений."""
+    if os.path.exists(HISTORY_FILE):
+        os.remove(HISTORY_FILE)
