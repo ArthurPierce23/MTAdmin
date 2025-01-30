@@ -2,10 +2,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QMenuBar, QMenu, QLabel, QTabWidget, QPushButton,
     QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QDialog, QListWidget
+    QDialog, QListWidget, QMessageBox
 )
 from PySide6.QtGui import QIcon, QPixmap, QFont, QAction
-from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer
 from styles import apply_theme, THEMES
 from settings import load_settings, save_settings
 from database.db_manager import (
@@ -15,7 +15,31 @@ from database.db_manager import (
 from main_gui.utils import is_valid_ip, detect_os
 
 
+class ConnectionThread(QThread):
+    finished = Signal(str, str, str)  # ip, os_name, error
 
+
+    def __init__(self, ip):
+        super().__init__()
+        self.ip = ip
+
+    def run(self):
+        try:
+            if not is_valid_ip(self.ip):
+                self.finished.emit(self.ip, "", "Неверный формат IP")
+                return
+
+            os_name = detect_os(self.ip)
+            if os_name in ["Недоступен", "Ошибка проверки"]:
+                self.finished.emit(self.ip, "", f"Адрес {self.ip} недоступен")
+                return
+
+            add_recent_connection(self.ip)
+            add_to_workstation_map(self.ip, os_name)
+            self.finished.emit(self.ip, os_name, "")
+
+        except Exception as e:
+            self.finished.emit(self.ip, "", f"Ошибка: {str(e)}")
 
 class ThemeDialog(QDialog):
     """Диалоговое окно для выбора темы"""
@@ -36,7 +60,8 @@ class ThemeDialog(QDialog):
         layout.addWidget(self.ok_button)
         self.setStyleSheet(apply_theme("Темная"))
 
-    def get_selected_theme(self):
+    @property
+    def selected_theme(self):
         return self.theme_list.currentItem().text() if self.theme_list.currentItem() else None
 
 
@@ -60,8 +85,23 @@ class MainWindow(QMainWindow):
 
         self.settings = load_settings()
         self.current_theme = self.settings.get("theme", "Без темы")
-        self.setAttribute(Qt.WA_DeleteOnClose)  # Для корректной очистки
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.status_bar = self.statusBar()
+
+        status_widget = QWidget()
+        self.notification_layout = QHBoxLayout(status_widget)
+        self.notification_label = QLabel()
+        self.notification_layout.addWidget(self.notification_label)
+
+        self.status_bar.addPermanentWidget(status_widget)  # <-- Исправлено
+
         self._init_ui()
+
+    def _show_notification(self, message, error=False):
+        """Показывает уведомление в статусной строке"""
+        self.notification_label.setStyleSheet("color: red;" if error else "color: green;")
+        self.notification_label.setText(message)
+        QTimer.singleShot(5000, lambda: self.notification_label.setText(""))
 
     def _handle_recent_double_click(self, row, col, tab):
         ip_item = tab.recent_table.item(row, 0)
@@ -107,7 +147,7 @@ class MainWindow(QMainWindow):
         theme_list = list(THEMES.keys())  # Получаем список доступных тем
         dialog = ThemeDialog(theme_list)  # Передаем список тем в диалог
         if dialog.exec() == QDialog.Accepted:
-            selected_theme = dialog.get_selected_theme()
+            selected_theme = dialog.selected_theme
             if selected_theme:
                 self.current_theme = selected_theme
                 save_settings({"theme": self.current_theme})  # Сохранение выбранной темы
@@ -145,7 +185,14 @@ class MainWindow(QMainWindow):
 
         # Логотип
         logo = QLabel()
-        pixmap = QPixmap("logo.png").scaled(50, 50, Qt.KeepAspectRatio)
+        try:
+            if QPixmap("logo.png").isNull():
+                raise FileNotFoundError
+            pixmap = QPixmap("logo.png").scaled(50, 50, Qt.KeepAspectRatio)
+        except:
+            pixmap = QPixmap(50, 50)
+            pixmap.fill(Qt.GlobalColor.transparent)
+
         logo.setPixmap(pixmap)
 
         # Заголовок
@@ -201,14 +248,21 @@ class MainWindow(QMainWindow):
         connection_box = QGroupBox("Подключение к ПК")
         conn_layout = QHBoxLayout()
 
+        # Уменьшаем отступы
+        conn_layout.setContentsMargins(5, 5, 5, 5)  # Были стандартные
+        conn_layout.setSpacing(5)  # Было больше
+
         tab.ip_input = QLineEdit()
+        tab.ip_input.setFixedHeight(28)  # Фиксированная высота
         tab.ip_input.setPlaceholderText("Введите IP-адрес")
 
-        connect_btn = QPushButton("Подключиться")
-        connect_btn.clicked.connect(lambda: self._handle_connection(tab))
+        tab.connect_btn = QPushButton("Подключиться")
+        tab.connect_btn.setObjectName("connect_btn")  # Добавить идентификатор
+        tab.connect_btn.setFixedWidth(100)  # Фиксированная ширина кнопки
+        tab.connect_btn.clicked.connect(lambda: self._handle_connection(tab))
 
         conn_layout.addWidget(tab.ip_input)
-        conn_layout.addWidget(connect_btn)
+        conn_layout.addWidget(tab.connect_btn)
         connection_box.setLayout(conn_layout)
         layout.addWidget(connection_box)
 
@@ -260,13 +314,28 @@ class MainWindow(QMainWindow):
     def _handle_connection(self, tab):
         """Обработка подключения"""
         ip = tab.ip_input.text().strip()
+        if not ip:
+            self._show_notification("Введите IP-адрес", error=True)
+            return
 
         if not is_valid_ip(ip):
             print("Некорректный IP-адрес")
             return
 
-        os_name = detect_os(ip)
+        # Блокируем кнопку на время проверки
+        tab.connect_btn.setEnabled(False)
+        tab.connect_btn.setText("Проверка...")
 
+        # Запускаем в отдельном потоке
+        self.thread = ConnectionThread(ip)
+        self.thread.finished.connect(lambda ip, os_name, err: self._handle_connection_result(tab, ip, os_name, err))
+        self.thread.start()
+
+        os_name = detect_os(ip)
+        if os_name in ["Windows", "Linux"]:
+            add_to_workstation_map(ip, os_name)
+        else:
+            print(f"Не удалось определить ОС: {os_name}")
         # Добавляем подключение в таблицу недавних подключений
         add_recent_connection(ip)
 
@@ -278,6 +347,17 @@ class MainWindow(QMainWindow):
         tab.ip_input.clear()
 
         update_emitter.data_updated.emit()  # <-- Добавить эту строку
+
+    def _handle_connection_result(self, tab, ip, os_name, error):
+        tab.connect_btn.setEnabled(True)
+        tab.connect_btn.setText("Подключиться")
+
+        if error:
+            QMessageBox.critical(self, "Ошибка", error)
+        else:
+            self._show_notification(f"Успешно добавлено: {ip} ({os_name})")
+            self._load_tab_data(tab)
+            tab.ip_input.clear()
 
     def _load_recent_connections(self, table):
         """Загрузка недавних подключений"""
@@ -317,10 +397,7 @@ class MainWindow(QMainWindow):
 
     def apply_current_theme(self):
         """Применение выбранной темы"""
-        if self.current_theme == "Без темы":
-            self.setStyleSheet("")
-        else:
-            self.setStyleSheet(apply_theme(self.current_theme))
+        self.setStyleSheet(apply_theme(self.current_theme) if self.current_theme != "Без темы" else "")
         self.repaint()
 
 
