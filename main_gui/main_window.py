@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QDialog, QListWidget
 )
 from PySide6.QtGui import QIcon, QPixmap, QFont, QAction
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QObject, Signal
 from styles import apply_theme, THEMES
 from settings import load_settings, save_settings
 from database.db_manager import (
@@ -13,6 +13,8 @@ from database.db_manager import (
     add_to_workstation_map, get_workstation_map, init_db
 )
 from main_gui.utils import is_valid_ip, detect_os
+
+
 
 
 class ThemeDialog(QDialog):
@@ -38,6 +40,15 @@ class ThemeDialog(QDialog):
         return self.theme_list.currentItem().text() if self.theme_list.currentItem() else None
 
 
+class UpdateEmitter(QObject):
+    data_updated = Signal()
+
+    def __init__(self):
+        super().__init__()
+
+
+update_emitter = UpdateEmitter()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -49,7 +60,20 @@ class MainWindow(QMainWindow):
 
         self.settings = load_settings()
         self.current_theme = self.settings.get("theme", "Без темы")
+        self.setAttribute(Qt.WA_DeleteOnClose)  # Для корректной очистки
         self._init_ui()
+
+    def _handle_recent_double_click(self, row, col, tab):
+        ip_item = tab.recent_table.item(row, 0)
+        if ip_item:
+            tab.ip_input.setText(ip_item.text())
+
+    def _handle_workstation_double_click(self, row, col, tab):
+        if col == 0:  # Игнорируем столбец "РМ"
+            return
+        ip_item = tab.workstation_table.item(row, 1)
+        if ip_item:
+            tab.ip_input.setText(ip_item.text())
 
     def _create_menubar(self):
         """Создание главного меню"""
@@ -170,6 +194,8 @@ class MainWindow(QMainWindow):
         # Первоначальная загрузка данных
         self._load_tab_data(tab)
 
+        update_emitter.data_updated.connect(lambda: self._load_tab_data(tab))
+
     def _setup_connection_block(self, layout, tab):
         """Блок подключения к ПК"""
         connection_box = QGroupBox("Подключение к ПК")
@@ -214,6 +240,14 @@ class MainWindow(QMainWindow):
         tab.workstation_table.setHorizontalHeaderLabels(["РМ", "IP", "ОС", "Последнее подключение"])
         tab.workstation_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
+        # После создания tab.recent_table и tab.workstation_table:
+        tab.recent_table.cellDoubleClicked.connect(
+            lambda row, col, t=tab: self._handle_recent_double_click(row, col, t)
+        )
+        tab.workstation_table.cellDoubleClicked.connect(
+            lambda row, col, t=tab: self._handle_workstation_double_click(row, col, t)
+        )
+
         tables_layout.addWidget(tab.recent_table)
         tables_layout.addWidget(tab.workstation_table)
         layout.addLayout(tables_layout)
@@ -243,14 +277,20 @@ class MainWindow(QMainWindow):
         self._load_tab_data(tab)
         tab.ip_input.clear()
 
+        update_emitter.data_updated.emit()  # <-- Добавить эту строку
+
     def _load_recent_connections(self, table):
         """Загрузка недавних подключений"""
         data = get_recent_connections()
         table.setRowCount(len(data))
 
         for row, (ip, date) in enumerate(data):
-            table.setItem(row, 0, QTableWidgetItem(ip))
-            table.setItem(row, 1, QTableWidgetItem(date))
+            ip_item = QTableWidgetItem(ip)
+            ip_item.setFlags(ip_item.flags() & ~Qt.ItemIsEditable)
+            date_item = QTableWidgetItem(date)
+            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
+            table.setItem(row, 0, ip_item)
+            table.setItem(row, 1, date_item)
 
     def _load_workstation_map(self, table):
         """Загрузка карты рабочих мест"""
