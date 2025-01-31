@@ -414,6 +414,10 @@ class MainWindow(QMainWindow):
         tab.connect_btn.setEnabled(True)
         tab.connect_btn.setText("Подключиться")
 
+        # Очистка информации о предыдущем ПК
+        if hasattr(tab, 'os_window'):  # Проверка на существование окна с данными о ПК
+            tab.os_window._clear_system_info()
+
         if error:
             QMessageBox.critical(self, "Ошибка", error)
         else:
@@ -424,19 +428,30 @@ class MainWindow(QMainWindow):
             tab.ip_input.clear()
             update_emitter.data_updated.emit()
 
-            # Создаем новую вкладку с интерфейсом ОС
+            # Создаем новый объект окна для текущего ПК
+            os_tab = QWidget()
+            os_layout = QVBoxLayout(os_tab)
+
+            # Здесь мы пересоздаем окно для нового ПК
             if os_name == "Windows":
-                os_tab = QWidget()
-                os_layout = QVBoxLayout(os_tab)
-                windows_gui = WindowsWindow(ip=ip, os_name=os_name)  # Создаём объект WindowsWindow
-                os_layout.addWidget(windows_gui)  # Добавляем GUI в Layout
+                windows_gui = WindowsWindow(ip=ip, os_name=os_name)
+                os_layout.addWidget(windows_gui)
                 windows_gui.setMaximumHeight(400)  # Ограничение по высоте
-                os_tab.setLayout(os_layout)  # Устанавливаем Layout в os_tab
             else:
-                os_tab = LinuxWindow(ip=ip, os_name=os_name)
+                linux_gui = LinuxWindow(ip=ip, os_name=os_name)
+                os_layout.addWidget(linux_gui)
 
+            os_tab.setLayout(os_layout)
 
-            # Добавляем вкладку и делаем ее активной
+            # Сбрасываем информацию о системе перед загрузкой новой сессии
+            windows_gui = WindowsWindow(ip=ip, os_name=os_name)
+            windows_gui._clear_system_info()  # Сбрасываем данные о системе
+            windows_gui._update_system_info()  # Загружаем новые данные
+
+            # Сохраняем ссылку на окно для будущего сброса данных
+            tab.os_window = windows_gui if os_name == "Windows" else linux_gui
+
+            # Добавляем вкладку для текущего ПК и переключаемся на неё
             tab_index = self.inner_tabs.addTab(os_tab, f"{os_name} - {ip}")
             self.inner_tabs.setCurrentIndex(tab_index)
             self.inner_tabs.update()

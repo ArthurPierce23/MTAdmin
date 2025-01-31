@@ -9,6 +9,7 @@ from PySide6.QtGui import QContextMenuEvent
 from windows_gui.commands import run_psexec, run_winrs, run_compmgmt, run_rdp, open_c_drive, run_shadow_rdp, get_shadow_session_id
 from windows_gui.scripts import ScriptManager
 from windows_gui.active_users import get_active_users
+from windows_gui.system_info import get_system_info
 
 class WindowsWindow(QWidget):
     refresh_requested = Signal()
@@ -23,6 +24,9 @@ class WindowsWindow(QWidget):
         # Создаём UI до вызова обновления таблицы
         self._init_ui()
 
+        # Обновляем информацию о системе сразу при старте
+        self._update_system_info()
+
         # Убедимся, что таблица создана
         if hasattr(self, 'users_table'):
             self._update_users_table()
@@ -33,6 +37,9 @@ class WindowsWindow(QWidget):
             self.users_table.resizeRowsToContents()
         else:
             print("Ошибка: users_table не была создана!")
+
+        # Настроим обновление системной информации
+        self.refresh_requested.connect(self._update_system_info)
 
     def _init_ui(self):
         """Инициализация UI"""
@@ -261,13 +268,14 @@ class WindowsWindow(QWidget):
         group = QGroupBox("Состояние системы")
         layout = QVBoxLayout()
 
-        self.cpu_label = QLabel("CPU: 15%")
-        self.ram_label = QLabel("RAM: 4.2/8.0 GB (52%)")
+        # Метки для отображения данных о системе
+        self.cpu_label = QLabel("CPU: 0%")
+        self.ram_label = QLabel("RAM: 0/0 GB (0%)")
 
         # Диски
         disks_layout = QVBoxLayout()
-        self.disk_c_label = QLabel("C: Свободно 45.2 GB, Всего 120 GB")
-        self.disk_d_label = QLabel("D: Свободно 112.5 GB, Всего 256 GB")
+        self.disk_c_label = QLabel("C: Свободно 0 GB, Всего 0 GB")
+        self.disk_d_label = QLabel("D: Свободно 0 GB, Всего 0 GB")
         disks_layout.addWidget(self.disk_c_label)
         disks_layout.addWidget(self.disk_d_label)
 
@@ -277,6 +285,34 @@ class WindowsWindow(QWidget):
         group.setLayout(layout)
 
         return group
+
+    def _update_system_info(self):
+        try:
+            system_info = get_system_info(self.ip)
+
+            if isinstance(system_info, str):
+                QMessageBox.critical(self, "Ошибка", system_info)
+                return
+
+            self.cpu_label.setText(f"CPU: {system_info['cpu']}%")
+            self.ram_label.setText(f"RAM: {system_info['ram'][0]:.2f}/{system_info['ram'][1]:.2f} GB ({system_info['ram'][2]}%)")
+
+            # Обновление информации о дисках
+            self.disk_c_label.setText(f"C: Свободно {system_info['disks'][0]['free']:.2f} GB, Всего {system_info['disks'][0]['total']:.2f} GB")
+            if len(system_info['disks']) > 1:
+                self.disk_d_label.setText(f"D: Свободно {system_info['disks'][1]['free']:.2f} GB, Всего {system_info['disks'][1]['total']:.2f} GB")
+            else:
+                self.disk_d_label.setText("D: Информация недоступна")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка обновления информации о системе: {str(e)}")
+
+    def _clear_system_info(self):
+        """Сбрасывает отображаемую информацию о системе."""
+        self.cpu_label.setText("CPU: 0%")
+        self.ram_label.setText("RAM: 0/0 GB (0%)")
+        self.disk_c_label.setText("C: Свободно 0 GB, Всего 0 GB")
+        self.disk_d_label.setText("D: Свободно 0 GB, Всего 0 GB")
 
     def _create_control_buttons(self):
         layout = QHBoxLayout()
