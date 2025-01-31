@@ -17,6 +17,8 @@ from main_gui.utils import is_valid_ip, detect_os
 from database.db_manager import remove_from_workstation_map, clear_recent_connections  # Добавляем функцию удаления
 from PySide6.QtWidgets import QFileDialog, QDialogButtonBox, QSpinBox
 from settings import load_settings, save_settings, SETTINGS_FILE  # Правильный импорт
+from linux_gui.linux_window import LinuxWindow
+from windows_gui.windows_window import WindowsWindow
 
 class ConnectionThread(QThread):
     finished = Signal(str, str, str)  # ip, os_name, error
@@ -404,23 +406,29 @@ class MainWindow(QMainWindow):
 
     def _handle_connection_result(self, tab, ip, os_name, error, thread):
         if thread in self.threads:
-            self.threads.remove(thread)  # Удаляем поток из списка после завершения
-        """Обработчик завершения потока подключения"""
+            self.threads.remove(thread)
         tab.connect_btn.setEnabled(True)
         tab.connect_btn.setText("Подключиться")
 
         if error:
             QMessageBox.critical(self, "Ошибка", error)
         else:
-            # Добавляем в БД только здесь, чтобы не было дубликатов
             add_recent_connection(ip)
             add_to_workstation_map(ip, os_name)
-
             self._show_notification(f"Успешно добавлено: {ip} ({os_name})")
-
             self._load_tab_data(tab)
             tab.ip_input.clear()
             update_emitter.data_updated.emit()
+
+            # Создаем новую вкладку с интерфейсом ОС
+            if os_name == "Windows":
+                os_tab = WindowsWindow(ip=ip, os_name=os_name)
+            else:
+                os_tab = LinuxWindow(ip=ip, os_name=os_name)
+
+            # Добавляем вкладку и делаем ее активной
+            tab_index = self.inner_tabs.addTab(os_tab, f"{os_name} - {ip}")
+            self.inner_tabs.setCurrentIndex(tab_index)
 
     def _load_recent_connections(self, table):
         """Загрузка недавних подключений"""
