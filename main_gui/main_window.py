@@ -1,14 +1,13 @@
 import shutil
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QMenuBar, QMenu, QLabel, QTabWidget, QPushButton,
+    QMenu, QLabel, QTabWidget, QPushButton,
     QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QDialog, QListWidget, QMessageBox
+    QDialog, QListWidget, QMessageBox, QSizePolicy
 )
 from PySide6.QtGui import QIcon, QPixmap, QFont, QAction
 from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer
 from styles import apply_theme, THEMES
-from settings import load_settings, save_settings
 from database.db_manager import (
     add_recent_connection, get_recent_connections,
     add_to_workstation_map, get_workstation_map, init_db
@@ -49,7 +48,9 @@ class ThemeDialog(QDialog):
     def __init__(self, theme_list):
         super().__init__()
         self.setWindowTitle("Выбор темы")
-        self.setFixedSize(300, 200)
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(200)
+
 
         layout = QVBoxLayout(self)
         self.theme_list = QListWidget()
@@ -170,8 +171,7 @@ class MainWindow(QMainWindow):
     def _init_ui(self):
         """Инициализация интерфейса"""
         self.setWindowTitle("MTAdmin")
-        self.setFixedSize(800, 800)
-
+        self.resize(800, 800)  # Позволит изменять размер окна
         # Добавляем меню
         self._create_menubar()  # <-- Важная строка!
 
@@ -185,7 +185,7 @@ class MainWindow(QMainWindow):
 
         # Основные вкладки
         self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
+        main_layout.addWidget(self.tabs, stretch=1)
 
         # Вкладка управления ПК
         self._setup_pc_management_tab()
@@ -235,6 +235,7 @@ class MainWindow(QMainWindow):
         self.inner_tabs.setCornerWidget(add_btn, Qt.TopRightCorner)
 
         layout.addWidget(self.inner_tabs)
+        self.inner_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
         self._add_session_tab()
 
     def _add_session_tab(self):
@@ -269,11 +270,14 @@ class MainWindow(QMainWindow):
         tab.ip_input = QLineEdit()
         tab.ip_input.setFixedHeight(28)  # Фиксированная высота
         tab.ip_input.setPlaceholderText("Введите IP-адрес")
+        tab.ip_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         tab.connect_btn = QPushButton("Подключиться")
         tab.connect_btn.setObjectName("connect_btn")  # Добавить идентификатор
-        tab.connect_btn.setFixedWidth(100)  # Фиксированная ширина кнопки
+        tab.connect_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         tab.connect_btn.clicked.connect(lambda: self._handle_connection(tab))
+        tab.connect_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
 
         conn_layout.addWidget(tab.ip_input)
         conn_layout.addWidget(tab.connect_btn)
@@ -422,13 +426,20 @@ class MainWindow(QMainWindow):
 
             # Создаем новую вкладку с интерфейсом ОС
             if os_name == "Windows":
-                os_tab = WindowsWindow(ip=ip, os_name=os_name)
+                os_tab = QWidget()
+                os_layout = QVBoxLayout(os_tab)
+                windows_gui = WindowsWindow(ip=ip, os_name=os_name)  # Создаём объект WindowsWindow
+                os_layout.addWidget(windows_gui)  # Добавляем GUI в Layout
+                windows_gui.setMaximumHeight(400)  # Ограничение по высоте
+                os_tab.setLayout(os_layout)  # Устанавливаем Layout в os_tab
             else:
                 os_tab = LinuxWindow(ip=ip, os_name=os_name)
+
 
             # Добавляем вкладку и делаем ее активной
             tab_index = self.inner_tabs.addTab(os_tab, f"{os_name} - {ip}")
             self.inner_tabs.setCurrentIndex(tab_index)
+            self.inner_tabs.update()
 
     def _load_recent_connections(self, table):
         """Загрузка недавних подключений"""
@@ -548,9 +559,3 @@ class SettingsDialog(QDialog):
         layout.addWidget(btn_box)
 
         self.setLayout(layout)
-
-if __name__ == "__main__":
-    app = QApplication([])
-    window = MainWindow()
-    window.show()
-    app.exec()

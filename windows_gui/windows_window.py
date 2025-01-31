@@ -2,12 +2,13 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit, QLabel,
     QCheckBox, QListWidget, QAbstractItemView, QMenu, QMessageBox,
-    QFileDialog, QInputDialog
+    QFileDialog, QInputDialog, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer, QMetaObject
 from PySide6.QtGui import QContextMenuEvent
 from windows_gui.commands import run_psexec, run_winrs, run_compmgmt, run_rdp, open_c_drive, run_shadow_rdp, get_shadow_session_id
 from windows_gui.scripts import ScriptManager
+from windows_gui.active_users import get_active_users
 
 class WindowsWindow(QWidget):
     refresh_requested = Signal()
@@ -18,26 +19,43 @@ class WindowsWindow(QWidget):
         self.ip = ip
         self.os_name = os_name
         self.script_manager = ScriptManager()
+
+        # Создаём UI до вызова обновления таблицы
         self._init_ui()
 
+        # Убедимся, что таблица создана
+        if hasattr(self, 'users_table'):
+            self._update_users_table()
+            self.refresh_requested.connect(self._update_users_table)
+
+            # Настройка таблицы
+            self.users_table.resizeColumnsToContents()
+            self.users_table.resizeRowsToContents()
+        else:
+            print("Ошибка: users_table не была создана!")
+
     def _init_ui(self):
+        """Инициализация UI"""
         main_layout = QHBoxLayout(self)
 
         # Левая панель с командами и скриптами
         left_panel = QVBoxLayout()
         left_panel.addWidget(self._create_commands_group())
         left_panel.addWidget(self._create_scripts_group())
-        left_panel.addStretch()
+        left_panel.setSpacing(10)  # Отступы между элементами
 
         # Правая панель с информацией
         right_panel = QVBoxLayout()
-        right_panel.addWidget(self._create_active_users_group())
-        right_panel.addWidget(self._create_rdp_management_group())
-        right_panel.addWidget(self._create_system_info_group())
-        right_panel.addLayout(self._create_control_buttons())
+        right_panel.addWidget(self._create_active_users_group(), stretch=1)
+        right_panel.addWidget(self._create_rdp_management_group(), stretch=1)
+        right_panel.addWidget(self._create_system_info_group(), stretch=1)
+        right_panel.addLayout(self._create_control_buttons(), stretch=0)
 
+        # Добавляем в основной макет
         main_layout.addLayout(left_panel, stretch=1)
-        main_layout.addLayout(right_panel, stretch=3)
+        main_layout.addLayout(right_panel, stretch=1)
+
+        self.setLayout(main_layout)
 
     def _create_scripts_group(self):
         group = QGroupBox("Скрипты")
@@ -52,7 +70,7 @@ class WindowsWindow(QWidget):
 
         # Список скриптов
         self.script_list = QListWidget()
-        self.script_list.setContextMenuPolicy(Qt.CustomContextMenu)  # Контекстное меню
+        self.script_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.script_list.customContextMenuRequested.connect(self._show_script_context_menu)
 
         self._update_script_list()
@@ -65,6 +83,7 @@ class WindowsWindow(QWidget):
         layout.addLayout(btn_layout)
         layout.addWidget(self.script_list)
         group.setLayout(layout)
+
         return group
 
     def _update_script_list(self):
@@ -166,7 +185,7 @@ class WindowsWindow(QWidget):
 
         # Добавляем кнопки в layout
         for btn in buttons:
-            btn.setFixedHeight(30)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # Кнопки растягиваются по ширине
             layout.addWidget(btn)
 
         # Подключаем обработчики событий
@@ -181,18 +200,22 @@ class WindowsWindow(QWidget):
         return group
 
     def _create_active_users_group(self):
+        """Создаёт группу с активными пользователями"""
+
         group = QGroupBox("Активные пользователи")
         layout = QVBoxLayout()
 
         self.users_table = QTableWidget(0, 3)
-        self.users_table.setHorizontalHeaderLabels(["№", "Логин", "Тип подключения"])
+        self.users_table.setHorizontalHeaderLabels(
+            ["№", "Логин", "Тип подключения"])
         self.users_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.users_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.users_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Заглушка данных
-        self._update_users_table()
-
+        layout.setContentsMargins(0, 0, 0, 0)  # Убираем отступы
         layout.addWidget(self.users_table)
+        group.setLayout(layout)
+
         return group
 
     def _create_rdp_management_group(self):
@@ -230,13 +253,14 @@ class WindowsWindow(QWidget):
         layout.addLayout(port_layout)
         layout.addWidget(self.rdp_users_list)
         layout.addLayout(add_user_layout)
+        group.setLayout(layout)
+
         return group
 
     def _create_system_info_group(self):
         group = QGroupBox("Состояние системы")
         layout = QVBoxLayout()
 
-        # CPU и RAM
         self.cpu_label = QLabel("CPU: 15%")
         self.ram_label = QLabel("RAM: 4.2/8.0 GB (52%)")
 
@@ -251,6 +275,7 @@ class WindowsWindow(QWidget):
         layout.addWidget(self.ram_label)
         layout.addLayout(disks_layout)
         group.setLayout(layout)
+
         return group
 
     def _create_control_buttons(self):
@@ -263,17 +288,41 @@ class WindowsWindow(QWidget):
 
         layout.addWidget(self.refresh_btn)
         layout.addWidget(self.close_btn)
+
         return layout
 
     def _update_users_table(self):
-        # Заглушка данных
-        self.users_table.setRowCount(2)
-        self.users_table.setItem(0, 0, QTableWidgetItem("1"))
-        self.users_table.setItem(0, 1, QTableWidgetItem("user1"))
-        self.users_table.setItem(0, 2, QTableWidgetItem("RDP-TCP#1"))
-        self.users_table.setItem(1, 0, QTableWidgetItem("2"))
-        self.users_table.setItem(1, 1, QTableWidgetItem("user2"))
-        self.users_table.setItem(1, 2, QTableWidgetItem("Console"))
+        try:
+            users_data = get_active_users(self.ip)
+
+            if isinstance(users_data, str):
+                QMessageBox.critical(self, "Ошибка", users_data)
+                return
+
+            if not users_data:
+                self.users_table.setRowCount(0)
+                return
+
+            self._populate_table(users_data)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка обновления: {str(e)}")
+
+    def _populate_table(self, users_data):
+        try:
+            self.users_table.setRowCount(len(users_data))
+
+            for row, user in enumerate(users_data):
+                self.users_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+                self.users_table.setItem(row, 1, QTableWidgetItem(user.get("username", "N/A")))
+                self.users_table.setItem(row, 2, QTableWidgetItem(user.get("state", "N/A")))
+
+            self.users_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            self.users_table.horizontalHeader().setStretchLastSection(True)
+            self.users_table.viewport().update()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка отображения данных: {str(e)}")
 
     def _on_rdp_toggle(self, state):
         # Заглушка для обработки изменения состояния RDP
