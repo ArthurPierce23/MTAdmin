@@ -21,7 +21,6 @@ from settings import load_settings, save_settings, SETTINGS_FILE  # Правил
 class ConnectionThread(QThread):
     finished = Signal(str, str, str)  # ip, os_name, error
 
-
     def __init__(self, ip):
         super().__init__()
         self.ip = ip
@@ -37,9 +36,7 @@ class ConnectionThread(QThread):
                 self.finished.emit(self.ip, "", f"Адрес {self.ip} недоступен")
                 return
 
-            add_recent_connection(self.ip)
-            add_to_workstation_map(self.ip, os_name)
-            self.finished.emit(self.ip, os_name, "")
+            self.finished.emit(self.ip, os_name, "")  # Передаем данные в основной поток
 
         except Exception as e:
             self.finished.emit(self.ip, "", f"Ошибка: {str(e)}")
@@ -97,7 +94,7 @@ class MainWindow(QMainWindow):
         self.notification_layout.addWidget(self.notification_label)
 
         self.status_bar.addPermanentWidget(status_widget)  # <-- Исправлено
-
+        self.threads = []  # Хранение активных потоков
         self._init_ui()
 
     def _show_about_dialog(self):
@@ -392,45 +389,38 @@ class MainWindow(QMainWindow):
             return
 
         if not is_valid_ip(ip):
-            print("Некорректный IP-адрес")
+            self._show_notification("Некорректный IP-адрес", error=True)
             return
 
         # Блокируем кнопку на время проверки
         tab.connect_btn.setEnabled(False)
         tab.connect_btn.setText("Проверка...")
 
-        # Запускаем в отдельном потоке
-        self.thread = ConnectionThread(ip)
-        self.thread.finished.connect(lambda ip, os_name, err: self._handle_connection_result(tab, ip, os_name, err))
-        self.thread.start()
+        # Запускаем проверку ОС в отдельном потоке
+        thread = ConnectionThread(ip)
+        thread.finished.connect(lambda ip, os_name, err: self._handle_connection_result(tab, ip, os_name, err, thread))
+        self.threads.append(thread)  # Добавляем поток в список
+        thread.start()
 
-        os_name = detect_os(ip)
-        if os_name in ["Windows", "Linux"]:
-            add_to_workstation_map(ip, os_name)
-        else:
-            print(f"Не удалось определить ОС: {os_name}")
-        # Добавляем подключение в таблицу недавних подключений
-        add_recent_connection(ip)
-
-        # Добавляем или обновляем запись в карте рабочих мест
-        add_to_workstation_map(ip, os_name)
-
-        # Загружаем обновлённые данные в таблицы
-        self._load_tab_data(tab)
-        tab.ip_input.clear()
-
-        update_emitter.data_updated.emit()  # <-- Добавить эту строку
-
-    def _handle_connection_result(self, tab, ip, os_name, error):
+    def _handle_connection_result(self, tab, ip, os_name, error, thread):
+        if thread in self.threads:
+            self.threads.remove(thread)  # Удаляем поток из списка после завершения
+        """Обработчик завершения потока подключения"""
         tab.connect_btn.setEnabled(True)
         tab.connect_btn.setText("Подключиться")
 
         if error:
             QMessageBox.critical(self, "Ошибка", error)
         else:
+            # Добавляем в БД только здесь, чтобы не было дубликатов
+            add_recent_connection(ip)
+            add_to_workstation_map(ip, os_name)
+
             self._show_notification(f"Успешно добавлено: {ip} ({os_name})")
+
             self._load_tab_data(tab)
             tab.ip_input.clear()
+            update_emitter.data_updated.emit()
 
     def _load_recent_connections(self, table):
         """Загрузка недавних подключений"""
