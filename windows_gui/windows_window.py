@@ -1,11 +1,13 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit, QLabel,
-    QCheckBox, QListWidget, QAbstractItemView, QMenu, QMessageBox
+    QCheckBox, QListWidget, QAbstractItemView, QMenu, QMessageBox,
+    QFileDialog, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QContextMenuEvent
-
+from windows_gui.commands import run_psexec, run_winrs, run_compmgmt, run_rdp, open_c_drive, run_shadow_rdp, get_shadow_session_id
+from windows_gui.scripts import ScriptManager
 
 class WindowsWindow(QWidget):
     refresh_requested = Signal()
@@ -15,6 +17,7 @@ class WindowsWindow(QWidget):
         super().__init__()
         self.ip = ip
         self.os_name = os_name
+        self.script_manager = ScriptManager()
         self._init_ui()
 
     def _init_ui(self):
@@ -36,10 +39,118 @@ class WindowsWindow(QWidget):
         main_layout.addLayout(left_panel, stretch=1)
         main_layout.addLayout(right_panel, stretch=3)
 
+    def _create_scripts_group(self):
+        group = QGroupBox("Скрипты")
+        layout = QVBoxLayout()
+
+        # Кнопки управления
+        btn_layout = QHBoxLayout()
+        self.add_script_btn = QPushButton("Добавить")
+        self.remove_script_btn = QPushButton("Удалить")
+        btn_layout.addWidget(self.add_script_btn)
+        btn_layout.addWidget(self.remove_script_btn)
+
+        # Список скриптов
+        self.script_list = QListWidget()
+        self.script_list.setContextMenuPolicy(Qt.CustomContextMenu)  # Контекстное меню
+        self.script_list.customContextMenuRequested.connect(self._show_script_context_menu)
+
+        self._update_script_list()
+
+        # Сигналы
+        self.add_script_btn.clicked.connect(self._add_script)
+        self.remove_script_btn.clicked.connect(self._remove_script)
+        self.script_list.itemDoubleClicked.connect(self._execute_script)
+
+        layout.addLayout(btn_layout)
+        layout.addWidget(self.script_list)
+        group.setLayout(layout)
+        return group
+
+    def _update_script_list(self):
+        self.script_list.clear()
+        for script in self.script_manager.get_scripts():
+            self.script_list.addItem(script["name"])
+
+    def _add_script(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите скрипт",
+            "",
+            "PowerShell Scripts (*.ps1)"
+        )
+
+        if file_path:
+            name, ok = QInputDialog.getText(
+                self,
+                "Имя скрипта",
+                "Введите отображаемое имя:"
+            )
+
+            if ok and name:
+                try:
+                    self.script_manager.add_script(file_path, name)
+                    self._update_script_list()
+                except Exception as e:
+                    self._show_error_message(str(e))
+
+    def _remove_script(self):
+        selected = self.script_list.currentItem()
+        if selected:
+            name = selected.text()
+            reply = QMessageBox.question(
+                self,
+                "Подтверждение",
+                f"Удалить скрипт '{name}'?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+
+            if reply == QMessageBox.Yes:
+                try:
+                    self.script_manager.delete_script(name)
+                    self._update_script_list()
+                except Exception as e:
+                    self._show_error_message(str(e))
+
+    def _execute_script(self, item):
+        script_name = item.text()
+        try:
+            self.script_manager.execute_script(script_name, self.ip)
+            # Удалили плашку с сообщением об успешном выполнении
+        except Exception as e:
+            self._show_error_message(str(e))
+
+    def _show_script_context_menu(self, pos):
+        menu = QMenu()
+
+        rename_action = menu.addAction("Переименовать")
+        remove_action = menu.addAction("Удалить")
+
+        action = menu.exec(self.script_list.mapToGlobal(pos))
+
+        selected_item = self.script_list.currentItem()
+        if selected_item:
+            script_name = selected_item.text()
+            if action == rename_action:
+                self._rename_script(script_name)
+            elif action == remove_action:
+                self._remove_script()
+
+    def _rename_script(self, old_name):
+        new_name, ok = QInputDialog.getText(self, "Переименование", "Введите новое имя:")
+
+        if ok and new_name:
+            try:
+                self.script_manager.rename_script(old_name, new_name)
+                self._update_script_list()
+            except Exception as e:
+                self._show_error_message(str(e))
+
     def _create_commands_group(self):
         group = QGroupBox("Команды")
         layout = QVBoxLayout()
 
+        # Создаем кнопки команд
         self.psexec_btn = QPushButton("PSExec")
         self.winrs_btn = QPushButton("WinRS")
         self.compmgmt_btn = QPushButton("compmgmt.msc")
@@ -47,30 +158,25 @@ class WindowsWindow(QWidget):
         self.c_drive_btn = QPushButton("C:\\")
         self.shadow_rdp_btn = QPushButton("Shadow RDP")
 
+        # Список кнопок
         buttons = [
             self.psexec_btn, self.winrs_btn, self.compmgmt_btn,
             self.rdp_btn, self.c_drive_btn, self.shadow_rdp_btn
         ]
 
+        # Добавляем кнопки в layout
         for btn in buttons:
             btn.setFixedHeight(30)
             layout.addWidget(btn)
 
-        group.setLayout(layout)
-        return group
+        # Подключаем обработчики событий
+        self.psexec_btn.clicked.connect(self._on_psexec_clicked)
+        self.winrs_btn.clicked.connect(self._on_winrs_clicked)
+        self.compmgmt_btn.clicked.connect(self._on_compmgmt_clicked)
+        self.rdp_btn.clicked.connect(self._on_rdp_clicked)
+        self.c_drive_btn.clicked.connect(self._on_c_drive_clicked)
+        self.shadow_rdp_btn.clicked.connect(self._on_shadow_rdp_clicked)
 
-    def _create_scripts_group(self):
-        group = QGroupBox("Скрипты")
-        layout = QVBoxLayout()
-
-        self.script_library_btn = QPushButton("Библиотека скриптов")
-        self.script_list = QListWidget()
-
-        # Заглушка для демонстрации
-        self.script_list.addItems(["Скрипт 1", "Скрипт 2", "Скрипт 3"])
-
-        layout.addWidget(self.script_library_btn)
-        layout.addWidget(self.script_list)
         group.setLayout(layout)
         return group
 
@@ -199,3 +305,43 @@ class WindowsWindow(QWidget):
     def contextMenuEvent(self, event: QContextMenuEvent):
         # Общая реализация контекстного меню при необходимости
         pass
+
+    def _on_psexec_clicked(self):
+        try:
+            run_psexec(self.ip)
+        except Exception as e:
+            self._show_error_message(f"Ошибка при запуске PSExec: {str(e)}")
+
+    def _on_winrs_clicked(self):
+        try:
+            run_winrs(self.ip)
+        except Exception as e:
+            self._show_error_message(f"Ошибка при запуске WinRS: {str(e)}")
+
+    def _on_compmgmt_clicked(self):
+        try:
+            run_compmgmt(self.ip)
+        except Exception as e:
+            self._show_error_message(f"Ошибка при запуске compmgmt.msc: {str(e)}")
+
+    def _on_rdp_clicked(self):
+        try:
+            run_rdp(self.ip)
+        except Exception as e:
+            self._show_error_message(f"Ошибка при запуске RDP: {str(e)}")
+
+    def _on_c_drive_clicked(self):
+        try:
+            open_c_drive(self.ip)
+        except Exception as e:
+            self._show_error_message(f"Ошибка при открытии диска C: {str(e)}")
+
+    def _on_shadow_rdp_clicked(self):
+        try:
+            session_id = get_shadow_session_id(self.ip)
+            run_shadow_rdp(self.ip, session_id)
+        except Exception as e:
+            self._show_error_message(f"Ошибка при подключении через Shadow RDP: {str(e)}")
+
+    def _show_error_message(self, message):
+        QMessageBox.critical(self, "Ошибка", message)
