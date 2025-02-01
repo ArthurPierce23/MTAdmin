@@ -1,7 +1,11 @@
 import subprocess
 import logging
 import re
-import wmi  # Нужно установить библиотеку wmi
+import platform
+
+# Проверяем, Windows ли это
+if platform.system() == "Windows":
+    import wmi  # Только для Windows
 
 EXCLUDED_USERNAMES = {'SYSTEM', 'LOCAL SERVICE', 'pdqdeployment', 'NETWORK SERVICE', 'СИСТЕМА'}
 
@@ -16,15 +20,15 @@ def get_active_users(ip):
         return f"Исключение: {str(e)}"
 
 def _get_local_users():
+    """Получает активных пользователей локального ПК"""
     try:
+        if platform.system() != "Windows":
+            logging.warning("Функция _get_local_users() недоступна на Linux.")
+            return []
+
         cmd = ["quser"]
         result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='ignore',  # Игнорируем ошибки кодировки
-            shell=True
+            cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', shell=True
         )
 
         if result.returncode != 0:
@@ -38,6 +42,11 @@ def _get_local_users():
         return []
 
 def _get_remote_users(ip):
+    """Получает активных пользователей на удаленном Windows-компьютере"""
+    if platform.system() != "Windows":
+        logging.warning(f"Попытка выполнить _get_remote_users() на Linux. Возвращаем заглушку.")
+        return [{"username": "Недоступно", "state": "ОС не поддерживается"}]
+
     try:
         # Используем WMI для получения активных пользователей
         c = wmi.WMI(computer=ip)
@@ -53,6 +62,7 @@ def _get_remote_users(ip):
         return []
 
 def _parse_quser_output(output):
+    """Разбирает вывод команды quser"""
     users = []
     lines = [line.strip() for line in output.split('\n') if line.strip()]
 
