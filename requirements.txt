@@ -2,3 +2,5 @@ PySide6
 wmi
 PyQt6
 pypsrp
+keyring
+paramiko

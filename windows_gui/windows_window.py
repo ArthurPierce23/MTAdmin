@@ -10,6 +10,8 @@ from windows_gui.commands import run_psexec, run_winrs, run_compmgmt, run_rdp, o
 from windows_gui.scripts import ScriptManager
 from windows_gui.active_users import get_active_users
 from windows_gui.system_info import get_system_info
+from notification import NotificationManager, Notification
+from styles import NOTIFICATION_STYLES
 
 class WindowsWindow(QWidget):
     refresh_requested = Signal()
@@ -17,6 +19,7 @@ class WindowsWindow(QWidget):
 
     def __init__(self, ip, os_name):
         super().__init__()
+        self.notification_manager = NotificationManager(self)
         self.ip = ip
         self.os_name = os_name
         self.script_manager = ScriptManager()
@@ -63,6 +66,15 @@ class WindowsWindow(QWidget):
         main_layout.addLayout(right_panel, stretch=1)
 
         self.setLayout(main_layout)
+
+    def show_notification(self, message, style_type="default"):
+        style = NOTIFICATION_STYLES.get(style_type, {})
+        notification = Notification(self, message, style=style)
+        self.notification_manager.add_notification(notification)
+
+    def resizeEvent(self, event):
+        self.notification_manager._update_positions()
+        super().resizeEvent(event)
 
     def _create_scripts_group(self):
         group = QGroupBox("Скрипты")
@@ -142,9 +154,9 @@ class WindowsWindow(QWidget):
         script_name = item.text()
         try:
             self.script_manager.execute_script(script_name, self.ip)
-            # Удалили плашку с сообщением об успешном выполнении
+            self.show_notification(f"Скрипт '{script_name}' успешно выполнен", "success")
         except Exception as e:
-            self._show_error_message(str(e))
+            self.show_notification(f"Ошибка выполнения: {str(e)}", "error")
 
     def _show_script_context_menu(self, pos):
         menu = QMenu()
@@ -291,7 +303,7 @@ class WindowsWindow(QWidget):
             system_info = get_system_info(self.ip)
 
             if isinstance(system_info, str):
-                QMessageBox.critical(self, "Ошибка", system_info)
+                self.show_notification(system_info, "error")
                 return
 
             self.cpu_label.setText(f"CPU: {system_info['cpu']}%")
@@ -305,7 +317,7 @@ class WindowsWindow(QWidget):
                 self.disk_d_label.setText("D: Информация недоступна")
 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка обновления информации о системе: {str(e)}")
+            self.show_notification(f"Ошибка обновления информации о системе: {str(e)}", "error")
 
     def _clear_system_info(self):
         """Сбрасывает отображаемую информацию о системе."""
@@ -332,7 +344,7 @@ class WindowsWindow(QWidget):
             users_data = get_active_users(self.ip)
 
             if isinstance(users_data, str):
-                QMessageBox.critical(self, "Ошибка", users_data)
+                self.show_notification(users_data, "error")
                 return
 
             if not users_data:
@@ -342,7 +354,7 @@ class WindowsWindow(QWidget):
             self._populate_table(users_data)
 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка обновления: {str(e)}")
+            self.show_notification(f"Ошибка обновления: {str(e)}", "error")
 
     def _populate_table(self, users_data):
         try:
@@ -358,7 +370,7 @@ class WindowsWindow(QWidget):
             self.users_table.viewport().update()
 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка отображения данных: {str(e)}")
+            self.show_notification(f"Ошибка отображения данных: {str(e)}", "error")
 
     def _on_rdp_toggle(self, state):
         # Заглушка для обработки изменения состояния RDP
@@ -366,8 +378,7 @@ class WindowsWindow(QWidget):
 
     def _change_rdp_port(self):
         new_port = self.rdp_port_input.text()
-        # Заглушка для изменения порта
-        QMessageBox.information(self, "Информация", f"Порт RDP изменен на {new_port}")
+        self.show_notification(f"Порт RDP изменен на {new_port}", "success")
 
     def _show_rdp_users_context_menu(self, pos):
         menu = QMenu()
@@ -377,9 +388,7 @@ class WindowsWindow(QWidget):
         if action == remove_action:
             selected_item = self.rdp_users_list.currentItem()
             if selected_item:
-                # Заглушка для удаления пользователя
-                QMessageBox.information(self, "Удаление",
-                                        f"Пользователь {selected_item.text()} удален")
+                self.show_notification(f"Пользователь {selected_item.text()} удален", "success")
 
     def _add_rdp_user(self):
         new_user = self.new_user_input.text()
@@ -394,39 +403,45 @@ class WindowsWindow(QWidget):
     def _on_psexec_clicked(self):
         try:
             run_psexec(self.ip)
+            self.show_notification("PSExec успешно запущен", "success")
         except Exception as e:
-            self._show_error_message(f"Ошибка при запуске PSExec: {str(e)}")
+            self.show_notification(f"Ошибка при запуске PSExec: {str(e)}", "error")
 
     def _on_winrs_clicked(self):
         try:
             run_winrs(self.ip)
+            self.show_notification("WinRS успешно запущен", "success")
         except Exception as e:
-            self._show_error_message(f"Ошибка при запуске WinRS: {str(e)}")
+            self.show_notification(f"Ошибка при запуске WinRS: {str(e)}", "error")
 
     def _on_compmgmt_clicked(self):
         try:
             run_compmgmt(self.ip)
+            self.show_notification("compmgmt.msc успешно запущен", "success")
         except Exception as e:
-            self._show_error_message(f"Ошибка при запуске compmgmt.msc: {str(e)}")
+            self.show_notification(f"Ошибка при запуске compmgmt.msc: {str(e)}", "error")
 
     def _on_rdp_clicked(self):
         try:
             run_rdp(self.ip)
+            self.show_notification("RDP подключение запущено", "success")
         except Exception as e:
-            self._show_error_message(f"Ошибка при запуске RDP: {str(e)}")
+            self.show_notification(f"Ошибка при запуске RDP: {str(e)}", "error")
 
     def _on_c_drive_clicked(self):
         try:
             open_c_drive(self.ip)
+            self.show_notification("Диск C: успешно открыт", "success")
         except Exception as e:
-            self._show_error_message(f"Ошибка при открытии диска C: {str(e)}")
+            self.show_notification(f"Ошибка при открытии диска C:: {str(e)}", "error")
 
     def _on_shadow_rdp_clicked(self):
         try:
             session_id = get_shadow_session_id(self.ip)
             run_shadow_rdp(self.ip, session_id)
+            self.show_notification("Shadow RDP подключение установлено", "success")
         except Exception as e:
-            self._show_error_message(f"Ошибка при подключении через Shadow RDP: {str(e)}")
+            self.show_notification(f"Ошибка при подключении через Shadow RDP: {str(e)}", "error")
 
     def _show_error_message(self, message):
         QMessageBox.critical(self, "Ошибка", message)

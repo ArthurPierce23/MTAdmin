@@ -21,6 +21,9 @@ from settings import load_settings, save_settings, SETTINGS_FILE  # Правил
 from linux_gui.linux_window import LinuxWindow
 from windows_gui.windows_window import WindowsWindow
 import platform
+from notification import Notification, NotificationManager
+from styles import NOTIFICATION_STYLES
+
 
 class ConnectionThread(QThread):
     finished = Signal(str, str, str)  # ip, os_name, error
@@ -101,6 +104,7 @@ class MainWindow(QMainWindow):
 
         self.status_bar.addPermanentWidget(status_widget)  # <-- Исправлено
         self.threads = []  # Хранение активных потоков
+        self.notification_manager = NotificationManager(self)
         self._init_ui()
 
     def _show_about_dialog(self):
@@ -108,11 +112,22 @@ class MainWindow(QMainWindow):
         about_text = "Здесь будет информация о программе"
         QMessageBox.about(self, "О программе", about_text)
 
-    def _show_notification(self, message, error=False):
-        """Показывает уведомление в статусной строке"""
-        self.notification_label.setStyleSheet("color: red;" if error else "color: green;")
-        self.notification_label.setText(message)
-        QTimer.singleShot(5000, lambda: self.notification_label.setText(""))
+    def show_notification(self, message, style_type="default"):
+        style = NOTIFICATION_STYLES.get(style_type, {})
+        notification = Notification(self, message, style=style)
+        self.notification_manager.add_notification(notification)
+
+    def moveEvent(self, event):
+        self.notification_manager._update_positions()
+        super().moveEvent(event)
+
+    def resizeEvent(self, event):
+        self.notification_manager._update_positions()
+        super().resizeEvent(event)
+
+    def showEvent(self, event):
+        self.notification_manager._update_positions()
+        super().showEvent(event)
 
     def _handle_recent_double_click(self, row, col, tab):
         ip_item = tab.recent_table.item(row, 0)
@@ -161,15 +176,15 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self.about_action)
 
     def _open_theme_dialog(self):
-        """Открытие диалогового окна выбора темы"""
-        theme_list = list(THEMES.keys())  # Получаем список доступных тем
-        dialog = ThemeDialog(theme_list)  # Передаем список тем в диалог
+        theme_list = list(THEMES.keys())
+        dialog = ThemeDialog(theme_list)
         if dialog.exec() == QDialog.Accepted:
             selected_theme = dialog.selected_theme
             if selected_theme:
                 self.current_theme = selected_theme
-                save_settings({"theme": self.current_theme})  # Сохранение выбранной темы
-                self.apply_current_theme()  # Применение новой темы
+                save_settings({"theme": self.current_theme})
+                self.apply_current_theme()
+                self.show_notification(f"Тема '{selected_theme}' применена", "success")
 
     def _init_ui(self):
         """Инициализация интерфейса"""
@@ -288,23 +303,28 @@ class MainWindow(QMainWindow):
         layout.addWidget(connection_box)
 
     def _export_settings(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Экспорт настроек", "settings.json", "JSON Files (*.json)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Экспорт настроек", "settings.json", "JSON Files (*.json)"
+        )
         if path:
             try:
-                shutil.copy(SETTINGS_FILE, path)  # Теперь переменная доступна
+                shutil.copy(SETTINGS_FILE, path)
+                self.show_notification("Настройки успешно экспортированы", "success")
             except Exception as e:
-                self._show_notification(f"Ошибка экспорта: {str(e)}", error=True)
+                self.show_notification(f"Ошибка экспорта: {str(e)}", "error")
 
     def _import_settings(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Импорт настроек", "", "JSON Files (*.json)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Импорт настроек", "", "JSON Files (*.json)"
+        )
         if path:
             try:
-                shutil.copy(path, SETTINGS_FILE)  # Теперь переменная доступна
+                shutil.copy(path, SETTINGS_FILE)
                 self.settings = load_settings()
                 self.apply_current_theme()
-                self._show_notification("Настройки успешно импортированы")
+                self.show_notification("Настройки успешно импортированы", "success")
             except Exception as e:
-                self._show_notification(f"Ошибка импорта: {str(e)}", error=True)
+                self.show_notification(f"Ошибка импорта: {str(e)}", "error")
 
     def _setup_search(self, layout, tab):
         """Добавляет поля поиска по таблицам"""
@@ -416,45 +436,46 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _handle_connection_result(self, tab, ip, os_name, error, thread, local_os):
-        """Обработка результата проверки ОС удаленного ПК"""
         if thread in self.threads:
             self.threads.remove(thread)
         tab.connect_btn.setEnabled(True)
         tab.connect_btn.setText("Подключиться")
 
         if error:
-            QMessageBox.critical(self, "Ошибка", error)
+            self.show_notification(error, "error")
             return
 
-        # Если программа запущена на Linux, а удаленный хост Windows → заглушка
         if local_os == "Linux" and os_name == "Windows":
-            QMessageBox.warning(self, "Недоступно", "Подключение к Windows возможно только с Windows!")
+            self.show_notification("Подключение к Windows возможно только с Windows!", "error")
             return
 
-        # Дальше стандартное подключение (если ОС совместима)
-        add_recent_connection(ip)
-        add_to_workstation_map(ip, os_name)
-        self._show_notification(f"Успешно добавлено: {ip} ({os_name})")
-        self._load_tab_data(tab)
-        tab.ip_input.clear()
-        update_emitter.data_updated.emit()
+        try:
+            add_recent_connection(ip)
+            add_to_workstation_map(ip, os_name)
+            self.show_notification(f"Успешно добавлено: {ip} ({os_name})", "success")
+            self._load_tab_data(tab)
+            tab.ip_input.clear()
+            update_emitter.data_updated.emit()
 
-        # Открываем соответствующее GUI
-        os_tab = QWidget()
-        os_layout = QVBoxLayout(os_tab)
+            os_tab = QWidget()
+            os_tab.setAttribute(Qt.WA_DeleteOnClose)
+            os_layout = QVBoxLayout(os_tab)
 
-        if os_name == "Windows":
-            windows_gui = WindowsWindow(ip=ip, os_name=os_name)
-            os_layout.addWidget(windows_gui)
-            windows_gui.setMaximumHeight(400)
-        else:
-            linux_gui = LinuxWindow(ip=ip, os_name=os_name)
-            os_layout.addWidget(linux_gui)
+            if os_name == "Windows":
+                windows_gui = WindowsWindow(ip=ip, os_name=os_name)
+                windows_gui.setAttribute(Qt.WA_DeleteOnClose)
+                os_layout.addWidget(windows_gui)
+                windows_gui.setMaximumHeight(400)
+            else:
+                linux_gui = LinuxWindow(ip=ip, os_name=os_name)
+                linux_gui.setAttribute(Qt.WA_DeleteOnClose)
+                os_layout.addWidget(linux_gui)
 
-        os_tab.setLayout(os_layout)
-        tab_index = self.inner_tabs.addTab(os_tab, f"{os_name} - {ip}")
-        self.inner_tabs.setCurrentIndex(tab_index)
-        self.inner_tabs.update()
+            os_tab.setLayout(os_layout)
+            self.inner_tabs.addTab(os_tab, f"{os_name} - {ip}")
+
+        except Exception as e:
+            self.show_notification(f"Ошибка подключения: {str(e)}", "error")
 
     def _load_recent_connections(self, table):
         """Загрузка недавних подключений"""
@@ -488,7 +509,10 @@ class MainWindow(QMainWindow):
             table.item(row, 0).setFlags(Qt.ItemIsEditable | Qt.ItemIsEnabled)
 
     def _close_inner_tab(self, index):
-        """Закрытие внутренней вкладки"""
+        """Закрытие внутренней вкладки с корректным уничтожением виджета"""
+        widget = self.inner_tabs.widget(index)
+        if widget:
+            widget.deleteLater()  # Инициируем удаление виджета
         if self.inner_tabs.count() > 1:
             self.inner_tabs.removeTab(index)
 
@@ -498,13 +522,14 @@ class MainWindow(QMainWindow):
         self.repaint()
 
     def _clear_recent_connections(self, table):
-        """Очищает недавние подключения"""
-        confirm = QMessageBox.question(self, "Очистка", "Вы уверены, что хотите очистить список?",
-                                       QMessageBox.Yes | QMessageBox.No)
+        confirm = QMessageBox.question(
+            self, "Очистка", "Вы уверены, что хотите очистить список?",
+            QMessageBox.Yes | QMessageBox.No
+        )
         if confirm == QMessageBox.Yes:
-            clear_recent_connections()  # Удаляем из БД
-            table.setRowCount(0)  # Чистим таблицу
-            self._show_notification("Список очищен", error=False)
+            clear_recent_connections()
+            table.setRowCount(0)
+            self.show_notification("Список очищен", "success")
 
     def _show_context_menu(self, table, pos):
         """Показывает контекстное меню"""
@@ -519,16 +544,17 @@ class MainWindow(QMainWindow):
         menu.exec(table.viewport().mapToGlobal(pos))
 
     def _delete_workstation_entry(self, table, row):
-        """Удаляет выбранную запись из Карты РМ"""
         ip_item = table.item(row, 1)
         if ip_item:
             ip = ip_item.text()
-            confirm = QMessageBox.question(self, "Удаление", f"Удалить {ip} из карты РМ?",
-                                           QMessageBox.Yes | QMessageBox.No)
+            confirm = QMessageBox.question(
+                self, "Удаление", f"Удалить {ip} из карты РМ?",
+                QMessageBox.Yes | QMessageBox.No
+            )
             if confirm == QMessageBox.Yes:
-                remove_from_workstation_map(ip)  # Удаляем из БД
-                table.removeRow(row)  # Удаляем строку из таблицы
-                self._show_notification(f"{ip} удален из Карты РМ", error=False)
+                remove_from_workstation_map(ip)
+                table.removeRow(row)
+                self.show_notification(f"{ip} удален из Карты РМ", "success")
 
     def _open_settings_dialog(self):
         dialog = SettingsDialog(self.settings)

@@ -28,7 +28,10 @@ MTAdmin/
 │   ├── commands.py             # Логика выполнения команд (ssh, ftp и т.д.)
 │   ├── scripts.py              # Логика работы со скриптами Bash
 │   └── system_info.py          # Получение информации о системе (аналогично Windows)
-│
+│   └── auth.py
+│   └── network.py
+│   └── process_manager.py
+│ 
 ├── database/                  # Работа с базой данных
 │   ├── __init__.py
 │   └── db_manager.py           # Логика работы с базой данных (например, SQLite)
