@@ -7,8 +7,8 @@ from PySide6.QtWidgets import (
     QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QDialog, QListWidget, QMessageBox, QSizePolicy
 )
-from PySide6.QtGui import QIcon, QPixmap, QFont, QAction
-from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer
+from PySide6.QtGui import QIcon, QPixmap, QFont, QAction, QIntValidator, QKeyEvent, QRegularExpressionValidator, QKeySequence, QValidator
+from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer, QRegularExpression
 from styles import apply_theme, THEMES
 from database.db_manager import (
     add_recent_connection, get_recent_connections,
@@ -23,6 +23,8 @@ from windows_gui.windows_window import WindowsWindow
 import platform
 from notification import Notification, NotificationManager
 from styles import NOTIFICATION_STYLES
+import traceback
+import logging
 
 
 class ConnectionThread(QThread):
@@ -276,26 +278,71 @@ class MainWindow(QMainWindow):
 
         update_emitter.data_updated.connect(lambda: self._load_tab_data(tab))
 
+    def _create_ip_input_handler(self, input_field):
+        def handler(event: QKeyEvent):
+            text = input_field.text()
+            cursor_pos = input_field.cursorPosition()
+
+            # Разрешаем все управляющие клавиши
+            if event.key() in (Qt.Key_Backspace, Qt.Key_Delete,
+                               Qt.Key_Left, Qt.Key_Right,
+                               Qt.Key_Home, Qt.Key_End):
+                return super(QLineEdit, input_field).keyPressEvent(event)
+
+            # Обработка точки
+            if event.key() in (Qt.Key_Period, Qt.Key_Space):
+                if len(text.split('.')) < 4:
+                    input_field.insert('.')
+                return True
+
+            # Разрешаем цифры (включая Numpad)
+            if event.text().isdigit() or event.key() in range(Qt.Key_0, Qt.Key_9 + 1):
+                parts = text.split('.')
+                current_part = len(text[:cursor_pos].split('.')) - 1
+
+                if current_part < 4:
+                    if len(parts[current_part]) < 3:
+                        super(QLineEdit, input_field).keyPressEvent(event)
+
+                        # Автоматическое добавление точки
+                        new_text = input_field.text()
+                        new_parts = new_text.split('.')
+                        if len(new_parts[current_part]) == 3 and current_part < 3:
+                            input_field.insert('.')
+                    return True
+
+            # Для всех остальных случаев
+            return super(QLineEdit, input_field).keyPressEvent(event)
+
+        return handler
+
     def _setup_connection_block(self, layout, tab):
         """Блок подключения к ПК"""
         connection_box = QGroupBox("Подключение к ПК")
         conn_layout = QHBoxLayout()
 
-        # Уменьшаем отступы
-        conn_layout.setContentsMargins(5, 5, 5, 5)  # Были стандартные
-        conn_layout.setSpacing(5)  # Было больше
-
+        # Поле ввода IP с валидацией
         tab.ip_input = QLineEdit()
-        tab.ip_input.setFixedHeight(28)  # Фиксированная высота
-        tab.ip_input.setPlaceholderText("Введите IP-адрес")
-        tab.ip_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        tab.ip_input.setPlaceholderText("Введите IP-адрес (например: 192.168.1.1)")
+        tab.ip_input.setFixedHeight(28)
 
-        tab.connect_btn = QPushButton("Подключиться")
-        tab.connect_btn.setObjectName("connect_btn")  # Добавить идентификатор
-        tab.connect_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Регулярное выражение для валидации IPv4
+        ip_regex = QRegularExpression(
+            r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
+        validator = QRegularExpressionValidator(ip_regex, self)
+        tab.ip_input.setValidator(validator)
+
+        # Разрешаем ввод точек и цифр с основной и дополнительной клавиатуры
+        tab.ip_input.setInputMethodHints(Qt.ImhFormattedNumbersOnly)
+
+        # Горячая клавиша Enter
+        tab.ip_input.returnPressed.connect(lambda: self._handle_connection(tab))
+
+        # Кнопка подключения
+        tab.connect_btn = QPushButton("Подключиться (Ctrl+Enter)")
+        tab.connect_btn.setShortcut(QKeySequence("Ctrl+Return"))
+        tab.connect_btn.setFixedHeight(28)
         tab.connect_btn.clicked.connect(lambda: self._handle_connection(tab))
-        tab.connect_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-
 
         conn_layout.addWidget(tab.ip_input)
         conn_layout.addWidget(tab.connect_btn)
@@ -405,6 +452,44 @@ class MainWindow(QMainWindow):
             lambda row, col, t=tab: self._handle_workstation_double_click(row, col, t)
         )
 
+        # Включаем сортировку
+        tab.recent_table.setSortingEnabled(True)
+        tab.workstation_table.setSortingEnabled(True)
+
+        # Сохраняем изменения номера РМ в БД
+        tab.workstation_table.itemChanged.connect(
+            lambda item: self._save_workstation_changes(item, tab.workstation_table))
+
+    def _save_workstation_changes(self, item, table):
+        """Сохраняет изменения в номере РМ в базе данных"""
+        try:
+            # Игнорируем программные изменения
+            if item.column() != 0 or not table.isPersistentEditorOpen(item):
+                return
+
+            row = item.row()
+            if row >= table.rowCount():
+                return
+
+            ip_item = table.item(row, 1)
+            os_item = table.item(row, 2)
+
+            if not ip_item or not os_item:
+                return  # Не показываем уведомление
+
+            ip = ip_item.text()
+            new_rm = item.text().strip()
+            os_name = os_item.text()
+
+            # Обновляем запись в базе данных (пустой RM допустим)
+            remove_from_workstation_map(ip)
+            add_to_workstation_map(ip, os_name, new_rm)
+            # Показываем уведомление только при явном изменении
+            self.show_notification("Изменения сохранены", "success")
+
+        except Exception as e:
+            logger.error(f"Ошибка сохранения: {str(e)}")
+
     def _load_tab_data(self, tab):
         """Загрузка данных в таблицы вкладки"""
         self._load_recent_connections(tab.recent_table)
@@ -413,50 +498,57 @@ class MainWindow(QMainWindow):
     def _handle_connection(self, tab):
         """Обработка подключения"""
         ip = tab.ip_input.text().strip()
-        if not ip:
-            self._show_notification("Введите IP-адрес", error=True)
+
+        # Проверка валидности IP через валидатор
+        state, _, _ = tab.ip_input.validator().validate(ip, 0)
+        if state != QValidator.Acceptable:
+            self.show_notification("Неверный формат IP-адреса", "error")
             return
 
         if not is_valid_ip(ip):
-            self._show_notification("Некорректный IP-адрес", error=True)
+            self.show_notification("Некорректный IP-адрес", "error")
             return
 
-        # Определяем ОС локального компьютера
+        # Обновленный код обработки подключения
         local_os = platform.system()
-
-        # Блокируем кнопку на время проверки
         tab.connect_btn.setEnabled(False)
         tab.connect_btn.setText("Проверка...")
 
-        # Запускаем проверку ОС в отдельном потоке
-        thread = ConnectionThread(ip)
-        thread.finished.connect(
-            lambda ip, os_name, err: self._handle_connection_result(tab, ip, os_name, err, thread, local_os))
-        self.threads.append(thread)  # Добавляем поток в список
-        thread.start()
+        try:
+            thread = ConnectionThread(ip)
+            thread.finished.connect(
+                lambda ip, os_name, err: self._handle_connection_result(tab, ip, os_name, err, thread, local_os))
+            self.threads.append(thread)
+            thread.start()
+        except Exception as e:
+            self.show_notification(f"Ошибка запуска потока: {str(e)}", "error")
+            tab.connect_btn.setEnabled(True)
+            tab.connect_btn.setText("Подключиться")
 
     def _handle_connection_result(self, tab, ip, os_name, error, thread, local_os):
-        if thread in self.threads:
-            self.threads.remove(thread)
-        tab.connect_btn.setEnabled(True)
-        tab.connect_btn.setText("Подключиться")
-
-        if error:
-            self.show_notification(error, "error")
-            return
-
-        if local_os == "Linux" and os_name == "Windows":
-            self.show_notification("Подключение к Windows возможно только с Windows!", "error")
-            return
-
         try:
+            if thread in self.threads:
+                self.threads.remove(thread)
+
+            tab.connect_btn.setEnabled(True)
+            tab.connect_btn.setText("Подключиться")
+
+            if error:
+                self.show_notification(error, "error")
+                return
+
+            if local_os == "Linux" and os_name == "Windows":
+                self.show_notification("Подключение к Windows возможно только с Windows!", "error")
+                return
+
+            # Добавление в историю и карту рабочих мест
             add_recent_connection(ip)
             add_to_workstation_map(ip, os_name)
-            self.show_notification(f"Успешно добавлено: {ip} ({os_name})", "success")
             self._load_tab_data(tab)
             tab.ip_input.clear()
             update_emitter.data_updated.emit()
 
+            # Создание новой вкладки подключения
             os_tab = QWidget()
             os_tab.setAttribute(Qt.WA_DeleteOnClose)
             os_layout = QVBoxLayout(os_tab)
@@ -475,7 +567,8 @@ class MainWindow(QMainWindow):
             self.inner_tabs.addTab(os_tab, f"{os_name} - {ip}")
 
         except Exception as e:
-            self.show_notification(f"Ошибка подключения: {str(e)}", "error")
+            self.show_notification(f"Критическая ошибка: {str(e)}", "error")
+            print(f"Error traceback: {traceback.format_exc()}")
 
     def _load_recent_connections(self, table):
         """Загрузка недавних подключений"""
@@ -494,19 +587,28 @@ class MainWindow(QMainWindow):
         """Загрузка карты рабочих мест"""
         data = get_workstation_map()
         table.setRowCount(len(data))
+        table.blockSignals(True)  # Отключаем обработку изменений
 
-        for row, (rm, ip, os_name, last_seen) in enumerate(data):
-            table.setItem(row, 0, QTableWidgetItem(rm))
-            table.setItem(row, 1, QTableWidgetItem(ip))
-            table.setItem(row, 2, QTableWidgetItem(os_name))
-            table.setItem(row, 3, QTableWidgetItem(last_seen))
+        try:
+            data = get_workstation_map()
+            table.setRowCount(len(data))
 
-            # Настройка редактирования
-            for col in range(1, 4):
-                item = table.item(row, col)
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            for row, (rm, ip, os_name, last_seen) in enumerate(data):
+                table.setItem(row, 0, QTableWidgetItem(rm))
+                table.setItem(row, 1, QTableWidgetItem(ip))
+                table.setItem(row, 2, QTableWidgetItem(os_name))
+                table.setItem(row, 3, QTableWidgetItem(last_seen))
 
-            table.item(row, 0).setFlags(Qt.ItemIsEditable | Qt.ItemIsEnabled)
+                # Настройка редактирования
+                for col in range(1, 4):
+                    item = table.item(row, col)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+
+                    # Настройка флагов редактирования
+                    table.item(row, 0).setFlags(Qt.ItemIsEditable | Qt.ItemIsEnabled)
+
+        finally:
+            table.blockSignals(False)  # Включаем обратно
 
     def _close_inner_tab(self, index):
         """Закрытие внутренней вкладки с корректным уничтожением виджета"""
@@ -600,3 +702,8 @@ class SettingsDialog(QDialog):
         layout.addWidget(btn_box)
 
         self.setLayout(layout)
+
+        # Формат даты
+        self.date_format = QLineEdit(current_settings.get("date_format", "dd.MM.yyyy HH:mm"))
+        layout.addWidget(QLabel("Формат даты:"))
+        layout.addWidget(self.date_format)

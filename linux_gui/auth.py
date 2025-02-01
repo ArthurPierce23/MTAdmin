@@ -1,5 +1,9 @@
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QMessageBox
+from PySide6.QtCore import Qt
 import paramiko
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AuthDialog(QDialog):
     """Диалоговое окно авторизации для подключения к Linux"""
@@ -11,6 +15,7 @@ class AuthDialog(QDialog):
         self.ip = ip
         self.setWindowTitle(f"Авторизация ({ip})")
         self.setMinimumWidth(300)
+        self.setWindowFlag(Qt.WindowCloseButtonHint, False)  # Запрет закрытия через крестик
         self._init_ui()
 
     def _init_ui(self):
@@ -90,9 +95,10 @@ class AuthDialog(QDialog):
             logger.error(f"SSH connection error: {str(e)}")
             return False
 
-    def get_credentials(self) -> tuple[str, str]:
-        """Возвращает введенные учетные данные"""
-        return (
-            self.input_login.text().strip(),
-            self.input_password.text().strip()
-        )
+    @staticmethod
+    def get_credentials(ip: str) -> tuple[str, str] | tuple[None, None]:
+        """Возвращает (логин, пароль) или (None, None) при отмене"""
+        dialog = AuthDialog(ip)
+        if dialog.exec() == QDialog.Accepted:
+            return dialog.input_login.text().strip(), dialog.input_password.text().strip()
+        return None, None  # Явное возвращение None при отмене

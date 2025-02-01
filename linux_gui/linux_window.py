@@ -10,11 +10,7 @@ from linux_gui.commands import SSHConnection, connect_vnc, connect_ssh, connect_
 from linux_gui.process_manager import get_process_list
 from linux_gui.network import get_network_info
 from linux_gui.logs import get_system_logs
-from linux_gui.scripts import (
-    list_scripts, add_script,
-    delete_script, rename_script,
-    execute_script
-)
+from linux_gui.scripts import list_scripts, add_script, delete_script, rename_script, execute_script
 import subprocess
 import platform
 import logging
@@ -23,9 +19,7 @@ import shutil
 from notification import Notification, NotificationManager
 from styles import NOTIFICATION_STYLES
 
-
 logger = logging.getLogger(__name__)
-
 
 class LinuxWindow(QWidget):
     """GUI для работы с Linux-системами"""
@@ -42,6 +36,8 @@ class LinuxWindow(QWidget):
         self.setWindowTitle(f"Linux: {ip}")
         self.resize(800, 600)
 
+        self.notification_manager = NotificationManager(self)
+
         # Окно авторизации
         self._request_auth()
 
@@ -55,12 +51,12 @@ class LinuxWindow(QWidget):
         self._init_process_tab()
         self._init_network_tab()
         self._init_logs_tab()
-        self._init_actions_tab()  # ✅ Добавляем вкладку "Действия"
+        self._init_actions_tab()
         self.tabs.currentChanged.connect(self._on_tab_change)
         self._init_scripts_context_menu()
-        self.notification_manager = NotificationManager(self)
 
     def show_notification(self, message, style_type="default"):
+        """Отображение уведомления"""
         style = NOTIFICATION_STYLES.get(style_type, {})
         notification = Notification(self, message, style=style)
         self.notification_manager.add_notification(notification)
@@ -77,6 +73,13 @@ class LinuxWindow(QWidget):
         self.notification_manager._update_positions()
         super().showEvent(event)
 
+    def _add_table_row(self, table: QTableWidget, items: list):
+        """Добавляет строку в таблицу."""
+        row = table.rowCount()
+        table.insertRow(row)
+        for col, text in enumerate(items):
+            table.setItem(row, col, QTableWidgetItem(str(text)))
+
     def _on_tab_change(self, index):
         """Автоматическое обновление данных при переключении вкладок"""
         tab_name = self.tabs.tabText(index)
@@ -92,16 +95,27 @@ class LinuxWindow(QWidget):
         elif tab_name == "Действия":
             self._update_scripts_list()
 
+    def connect_vnc(ip):
+        """Запуск VNC Viewer для подключения к удалённому IP"""
+        try:
+            if platform.system() == "Windows":
+                subprocess.Popen(["vncviewer.exe", ip])
+            else:
+                subprocess.Popen(["vncviewer", ip])
+        except Exception as e:
+            QMessageBox.critical(None, "Ошибка VNC", f"Не удалось запустить VNC Viewer: {str(e)}")
+
     def _request_auth(self):
-        dialog = AuthDialog(self.ip)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        """Запрос авторизации"""
+        login, password = AuthDialog.get_credentials(self.ip)
+
+        if login is None or password is None:
+            logger.warning("Авторизация отменена пользователем")
             self.close()
             return
 
-        self.username, self.password = dialog.get_credentials()
-
         try:
-            self.ssh_connection = SSHConnection(self.ip, self.username, self.password)
+            self.ssh_connection = SSHConnection(self.ip, login, password)
             self.ssh_connection.connect()
             output, _ = self.ssh_connection.execute_command("echo 'Auth check'")
             if "Auth check" not in output:
@@ -123,46 +137,26 @@ class LinuxWindow(QWidget):
         self.system_info_table.setEditTriggers(QTableWidget.NoEditTriggers)
 
         btn_refresh = QPushButton("Обновить информацию")
-        btn_refresh.clicked.connect(self._update_system_info)
+        btn_refresh.clicked.connect(lambda: self._update_system_info(manual=True))
 
         layout.addWidget(self.system_info_table)
         layout.addWidget(btn_refresh)
         self.tabs.addTab(tab, "Система")
 
         self._update_system_info()
-        btn_refresh.clicked.connect(lambda: self._update_system_info(manual=True))  # Обновлено
-
 
     def _update_system_info(self, manual=False):
+        """Обновляет информацию о системе"""
         try:
             info = get_system_info(self.ssh_connection)
             self.system_info_table.setRowCount(0)
             for key, value in info.items():
                 self._add_table_row(self.system_info_table, [key, value])
             if manual:
-                self.show_notification("Системная информация обновлена", "success")  # Добавлено
+                self.show_notification("Системная информация обновлена", "success")
         except Exception as e:
             self.show_notification(f"Ошибка загрузки данных: {str(e)}", "error")
 
-    def _create_table(self, headers, stretch_mode=QHeaderView.Stretch):
-        """Создает таблицу с заданными заголовками и настройками."""
-        table = QTableWidget(0, len(headers))
-        table.setHorizontalHeaderLabels(headers)
-        table.horizontalHeader().setSectionResizeMode(stretch_mode)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-        return table
-
-    def handle_errors(func):
-        """Декоратор для обработки ошибок в методах обновления."""
-
-        def wrapper(self, *args, **kwargs):
-            try:
-                return func(self, *args, **kwargs)
-            except Exception as e:
-                logger.exception(f"Ошибка в {func.__name__}: {e}")
-                QMessageBox.critical(self, "Ошибка", f"Ошибка загрузки данных: {str(e)}")
-
-        return wrapper
 
     def _update_logs(self, manual=False):
         """Обновляет системные журналы"""
@@ -170,33 +164,47 @@ class LinuxWindow(QWidget):
             logs = get_system_logs(self.ssh_connection)
             self.logs_text.setText(logs)
             if manual:
-                self.show_notification("Логи успешно обновлены", "success")  # Добавлено
+                self.show_notification("Логи успешно обновлены", "success")
         except Exception as e:
-            self.show_notification(f"Ошибка загрузки журналов: {str(e)}", "error")  # Исправлено
+            self.show_notification(f"Ошибка загрузки журналов: {str(e)}", "error")
+
 
     def closeEvent(self, event):
         """Закрытие окна и завершение SSH-сессии"""
-        logger.info(f"Закрытие окна для {self.ip}")
-
         if hasattr(self, 'process_timer'):
             self.process_timer.stop()
-            logger.info("Таймер обновления процессов остановлен.")
 
         if self.ssh_connection:
             self.ssh_connection.close()
-            logger.info(f"SSH-сессия с {self.ip} закрыта.")
 
         super().closeEvent(event)
 
     def _init_process_tab(self):
-        """Инициализирует вкладку с процессами и настраивает автообновление."""
-        self.process_table = self._create_table(["PID", "Имя", "CPU %"])
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.process_table = QTableWidget(0, 3)
+        self.process_table.setHorizontalHeaderLabels(["PID", "Имя процесса", "CPU %"])
+        self.process_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+        btn_refresh = QPushButton("Обновить список процессов")
+        btn_refresh.clicked.connect(self._update_process_list)
+
+        layout.addWidget(self.process_table)
+        layout.addWidget(btn_refresh)
+        self.tabs.addTab(tab, "Процессы")
+
         self.process_timer = QTimer(self)
         self.process_timer.timeout.connect(self._update_process_list)
-        self.process_timer.start(5000)  # Обновление каждые 5 секунд
+        self.process_timer.start(5000)
+
+        self._update_process_list()
 
     def _update_process_list(self):
         """Обновляет список процессов"""
+        if not self.ssh_connection:
+            logger.error("SSH-соединение не установлено. Пропуск обновления.")
+            return  # Прекращаем выполнение
         try:
             logger.info(f"Обновление списка процессов для {self.ip}")
             process_list = get_process_list(self.ssh_connection)
@@ -239,28 +247,35 @@ class LinuxWindow(QWidget):
         self.tabs.addTab(tab, "Сеть")
 
         self._update_network_info()
-        btn_refresh.clicked.connect(lambda: self._update_network_info(manual=True))  # Обновлено
 
-    def _update_network_info(self, manual=False):
+    def _update_network_info(self):
+        """Обновляет информацию о сети"""
+        if not self.ssh_connection:
+            logger.error("SSH-соединение не установлено. Пропуск обновления сети.")
+            return  # Прекращаем выполнение
         try:
             network_info = get_network_info(self.ssh_connection)
-            self.network_table.setRowCount(0)
-            max_len = max(len(network_info["Interfaces"]), len(network_info["IP Addresses"]))
-            for i in range(max_len):
-                iface = network_info["Interfaces"][i] if i < len(network_info["Interfaces"]) else "N/A"
-                ip = network_info["IP Addresses"][i] if i < len(network_info["IP Addresses"]) else "N/A"
-                self._add_table_row(self.network_table, [iface, ip])
-            if manual:
-                self.show_notification("Сетевая информация обновлена", "success")  # Добавлено
-        except Exception as e:
-            self.show_notification(f"Ошибка сетевых данных: {str(e)}", "error")
 
-    def _add_table_row(self, table, items):
-        """Добавляет строку с данными в таблицу."""
-        row = table.rowCount()
-        table.insertRow(row)
-        for col, text in enumerate(items):
-            table.setItem(row, col, QTableWidgetItem(str(text)))
+            # Очистка таблицы
+            self.network_table.setRowCount(0)
+
+            # Заполнение таблицы IP-адресов и интерфейсов
+            interfaces = network_info.get("Interfaces", [])
+            ips = network_info.get("IP Addresses", [])
+
+            for iface, ip in zip(interfaces, ips):
+                row = self.network_table.rowCount()
+                self.network_table.insertRow(row)
+                self.network_table.setItem(row, 0, QTableWidgetItem(iface))
+                self.network_table.setItem(row, 1, QTableWidgetItem(ip))
+
+            # Отображение активных соединений
+            connections = network_info.get("Active Connections", [])
+            formatted_connections = "\n".join(connections)
+            self.connections_text.setText(formatted_connections)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка загрузки сетевой информации: {str(e)}")
 
     def _init_logs_tab(self):
         """Вкладка: Журналы системы"""
@@ -269,10 +284,10 @@ class LinuxWindow(QWidget):
 
         self.logs_text = QTextEdit()
         self.logs_text.setReadOnly(True)
-        self.logs_text.setText("Загрузка журналов...")
+        self.logs_text.setText("Здесь будут системные журналы...")
 
         btn_refresh = QPushButton("Обновить логи")
-        btn_refresh.clicked.connect(lambda: self._update_logs(manual=True))  # Исправлено
+        btn_refresh.clicked.connect(lambda: self._show_stub("Обновление логов"))
 
         layout.addWidget(self.logs_text)
         layout.addWidget(btn_refresh)
@@ -285,16 +300,15 @@ class LinuxWindow(QWidget):
         self.tabs.addTab(stub_text, feature_name)
 
     def _init_actions_tab(self):
-        """Инициализирует вкладку с действиями (команды + скрипты)"""
+        """Инициализирует вкладку с действиями"""
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        # === Команды ===
         commands_box = QGroupBox("Команды")
         commands_layout = QVBoxLayout()
 
         connection_buttons = [
-            ("ssh", connect_ssh, [self.ip, self.username]),  # command_name в нижнем регистре
+            ("ssh", connect_ssh, [self.ip, self.username]),
             ("ftp", connect_ftp, [self.ip]),
             ("telnet", connect_telnet, [self.ip]),
             ("vnc", connect_vnc, [self.ip]),
@@ -302,26 +316,18 @@ class LinuxWindow(QWidget):
 
         for label, func, args in connection_buttons:
             btn = QPushButton(f"Подключиться по {label.upper()}")
-            # Передаем все три аргумента в правильном порядке:
             btn.clicked.connect(lambda _, f=func, cmd=label, a=args: self._handle_connection(f, cmd, a))
             commands_layout.addWidget(btn)
 
         commands_box.setLayout(commands_layout)
 
-        # === Скрипты ===
         scripts_box = QGroupBox("Управление скриптами")
         scripts_layout = QVBoxLayout()
 
-        # Список скриптов
         self.scripts_list = QListWidget()
         self.scripts_list.itemDoubleClicked.connect(self._execute_selected_script)
         self._update_scripts_list()
 
-        # Контекстное меню
-        self.scripts_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.scripts_list.customContextMenuRequested.connect(self._show_scripts_context_menu)
-
-        # Кнопки управления
         btn_add = QPushButton("Добавить скрипт")
         btn_add.clicked.connect(self._add_new_script)
 
@@ -339,21 +345,10 @@ class LinuxWindow(QWidget):
         self.tabs.addTab(tab, "Действия")
 
     def _handle_connection(self, connection_func, command_name, args):
-        # Логика метода остается без изменений
+        """Обработка подключения"""
         if command_name and not shutil.which(command_name):
-            self.show_notification(
-                f"Утилита '{command_name}' не найдена. Установите её",
-                "error"
-            )
+            self.show_notification(f"Утилита '{command_name}' не найдена. Установите её", "error")
             return
-
-        if command_name == "vnc" and platform.system() != "Windows":
-            if not shutil.which("vncviewer"):
-                self.show_notification(
-                    "Утилита vncviewer не найдена. Установите tightvnc или аналогичный пакет",
-                    "error"
-                )
-                return
 
         try:
             connection_func(*args)
@@ -373,61 +368,39 @@ class LinuxWindow(QWidget):
 
     # === Методы для скриптов ===
     def _update_scripts_list(self):
-        """Обновляет список доступных скриптов"""
         self.scripts_list.clear()
-        self.scripts_list.addItems(list_scripts())
+        scripts = list_scripts()
+        self.scripts_list.addItems(scripts)
 
     def _add_new_script(self):
-        """Диалог добавления нового скрипта"""
-        name, ok = QInputDialog.getText(self, "Новый скрипт", "Имя скрипта:")
-        if not ok or not name:
-            return
-
-        content, ok = QInputDialog.getMultiLineText(
-            self,
-            "Содержимое скрипта",
-            "Введите bash-команды:",
-            "#!/bin/bash\n\n"
-        )
-        if ok and content:
-            add_script(name, content)
-            self._update_scripts_list()
-
-    def _delete_selected_script(self):
-        if item := self.scripts_list.currentItem():
-            reply = QMessageBox.question(
-                self,
-                "Подтверждение",
-                f"Удалить скрипт '{item.text()}'?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply == QMessageBox.Yes:
-                delete_script(item.text())
-                self.show_notification(f"Скрипт '{item.text()}' удален", "success")
+        name, ok = QInputDialog.getText(self, "Новый скрипт", "Введите имя скрипта:")
+        if ok and name:
+            content, ok_content = QInputDialog.getMultiLineText(self, "Содержимое скрипта", "Введите bash-команды:")
+            if ok_content:
+                add_script(name, content)
                 self._update_scripts_list()
 
+    def _delete_selected_script(self):
+        selected_item = self.scripts_list.currentItem()
+        if selected_item:
+            script_name = selected_item.text()
+            delete_script(script_name)
+            self._update_scripts_list()
+
     def _rename_selected_script(self, item):
-        """Переименование скрипта через контекстное меню"""
         old_name = item.text()
-        new_name, ok = QInputDialog.getText(
-            self,
-            "Переименовать скрипт",
-            "Новое имя:",
-            text=old_name
-        )
+        new_name, ok = QInputDialog.getText(self, "Переименование скрипта", "Введите новое имя:")
         if ok and new_name:
             rename_script(old_name, new_name)
             self._update_scripts_list()
 
     def _execute_selected_script(self, item):
+        """Выполнение скрипта"""
         script_name = item.text()
         try:
             output, error = execute_script(self.ssh_connection, script_name)
             result = output if output else error
-            self.show_notification(
-                f"Скрипт '{script_name}' выполнен: {result[:100]}...",
-                "success" if output else "error"
-            )
+            self.show_notification(f"Скрипт '{script_name}' выполнен: {result[:100]}...", "success" if output else "error")
         except Exception as e:
             self.show_notification(f"Ошибка выполнения: {str(e)}", "error")
 
@@ -435,16 +408,17 @@ class LinuxWindow(QWidget):
         self.scripts_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.scripts_list.customContextMenuRequested.connect(self._show_scripts_context_menu)
 
-    def _show_scripts_context_menu(self, pos):
-        """Контекстное меню для скриптов"""
+    def _show_scripts_context_menu(self, position):
         menu = QMenu()
-        rename_action = menu.addAction("✏️ Переименовать")
-        delete_action = menu.addAction("🗑️ Удалить")
+        rename_action = menu.addAction("Переименовать")
+        delete_action = menu.addAction("Удалить")
 
-        if item := self.scripts_list.itemAt(pos):
-            action = menu.exec_(self.scripts_list.mapToGlobal(pos))
+        action = menu.exec_(self.scripts_list.mapToGlobal(position))
+        selected_item = self.scripts_list.currentItem()
+
+        if selected_item:
             if action == rename_action:
-                self._rename_selected_script(item)
+                self._rename_selected_script(selected_item)
             elif action == delete_action:
-                self._delete_selected_script()
+                self._delete_selected_script(selected_item)
 

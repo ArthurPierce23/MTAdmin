@@ -108,6 +108,11 @@ class SSHConnection:
 
     def execute_command(self, command: str) -> tuple[str, str]:
         """Выполняет команду на удаленном хосте"""
+
+        def execute_command(self, command: str) -> tuple[str, str]:
+            """Выполняет команду через SSH"""
+            if not self.client:
+                raise RuntimeError("Соединение не установлено")
         try:
             stdin, stdout, stderr = self.client.exec_command(command)
             output = stdout.read().decode().strip()
@@ -115,7 +120,7 @@ class SSHConnection:
             return output, error
         except Exception as e:
             logger.error(f"Ошибка выполнения команды: {str(e)}")
-            return "", str(e)
+            return "", str(e), output, error
 
     def close(self):
         """Закрывает соединение"""
