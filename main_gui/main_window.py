@@ -23,6 +23,8 @@ from notification import Notification, NotificationManager
 from styles import NOTIFICATION_STYLES
 import traceback
 import logging
+from .tab_widgets import DetachableTabWidget
+
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +272,7 @@ class MainWindow(QMainWindow):
     def _add_default_tab(self):
         """Добавление вкладки по умолчанию"""
         tab = QWidget()  # Создаем новый виджет
-        self.inner_tabs.addTab(tab, "Сессия 1")  # Добавляем вкладку
+        self.inner_tabs.addTab(tab, "Новая сессия")  # Добавляем вкладку
         self._setup_tab_content(tab)  # Настраиваем содержимое
 
     def _update_tab_style(self, index):
