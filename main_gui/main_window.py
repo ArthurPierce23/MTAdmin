@@ -2,22 +2,20 @@ import shutil
 from platform import platform
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QMenu, QLabel, QTabWidget, QPushButton,
-    QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QDialog, QListWidget, QMessageBox, QSizePolicy
+    QHBoxLayout, QMenu, QPushButton, QLineEdit, QGroupBox, QTableWidget,
+    QTableWidgetItem, QHeaderView, QDialog, QMessageBox, QSizePolicy
 )
-from PySide6.QtGui import QIcon, QPixmap, QFont, QAction, QIntValidator, QKeyEvent, QRegularExpressionValidator, QKeySequence, QValidator
-from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer, QRegularExpression
+from PySide6.QtGui import QIcon, QPixmap, QFont, QAction, QKeyEvent, QKeySequence, QValidator
+from PySide6.QtCore import Qt, QObject, Signal, QThread
 from styles import apply_theme, THEMES
 from database.db_manager import (
     add_recent_connection, get_recent_connections,
     add_to_workstation_map, get_workstation_map, init_db
 )
 from main_gui.utils import is_valid_ip, detect_os
-from database.db_manager import remove_from_workstation_map, clear_recent_connections  # Добавляем функцию удаления
+from database.db_manager import remove_from_workstation_map, clear_recent_connections
 from PySide6.QtWidgets import QFileDialog, QDialogButtonBox, QSpinBox
-from settings import load_settings, save_settings, SETTINGS_FILE  # Правильный импорт
+from settings import load_settings, save_settings, SETTINGS_FILE
 from linux_gui.linux_window import LinuxWindow
 from windows_gui.windows_window import WindowsWindow
 import platform
@@ -26,6 +24,13 @@ from styles import NOTIFICATION_STYLES
 import traceback
 import logging
 
+logger = logging.getLogger(__name__)
+
+
+from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QTabBar, QWidget, QVBoxLayout, QLabel
+from PySide6.QtCore import Qt
+from .tab_widgets import DetachableTabWidget, DetachableTabBar
+from .ui_components import IPLineEdit, ThemeDialog
 
 class ConnectionThread(QThread):
     finished = Signal(str, str, str)  # ip, os_name, error
@@ -49,31 +54,6 @@ class ConnectionThread(QThread):
 
         except Exception as e:
             self.finished.emit(self.ip, "", f"Ошибка: {str(e)}")
-
-class ThemeDialog(QDialog):
-    """Диалоговое окно для выбора темы"""
-
-    def __init__(self, theme_list):
-        super().__init__()
-        self.setWindowTitle("Выбор темы")
-        self.setMinimumWidth(300)
-        self.setMinimumHeight(200)
-
-
-        layout = QVBoxLayout(self)
-        self.theme_list = QListWidget()
-        self.theme_list.addItems(["Без темы"] + theme_list)
-
-        self.ok_button = QPushButton("OK")
-        self.ok_button.clicked.connect(self.accept)
-
-        layout.addWidget(self.theme_list)
-        layout.addWidget(self.ok_button)
-        self.setStyleSheet(apply_theme("Темная"))
-
-    @property
-    def selected_theme(self):
-        return self.theme_list.currentItem().text() if self.theme_list.currentItem() else None
 
 
 class UpdateEmitter(QObject):
@@ -107,6 +87,8 @@ class MainWindow(QMainWindow):
         self.status_bar.addPermanentWidget(status_widget)  # <-- Исправлено
         self.threads = []  # Хранение активных потоков
         self.notification_manager = NotificationManager(self)
+        self.drag_pos = None  # Для обработки перетаскивания
+        self.setAcceptDrops(True)
         self._init_ui()
 
     def _show_about_dialog(self):
@@ -149,33 +131,32 @@ class MainWindow(QMainWindow):
 
         # Меню "Файл"
         file_menu = menubar.addMenu("Файл")
-        exit_action = QAction("Выход", self)
-        exit_action.triggered.connect(self.close)
+        exit_action = self._create_action("Выход", self.close)
         file_menu.addAction(exit_action)
 
         # Меню "Настройки"
         settings_menu = menubar.addMenu("Настройки")
-        theme_action = QAction("Тема", self)
-        theme_action.triggered.connect(self._open_theme_dialog)
+        theme_action = self._create_action("Тема", self._open_theme_dialog)
 
         # Дополнительные настройки
-        self.advanced_settings_action = QAction("Дополнительные настройки", self)
-        self.advanced_settings_action.triggered.connect(self._open_settings_dialog)
+        self.advanced_settings_action = self._create_action("Дополнительные настройки", self._open_settings_dialog)
         settings_menu.addActions([theme_action, self.advanced_settings_action])
 
         # Меню "Экспорт/Импорт"
         export_menu = menubar.addMenu("Экспорт/Импорт")
-        self.export_action = QAction("Экспорт данных", self)  # Используем self.
-        self.import_action = QAction("Импорт данных", self)  # Используем self.
-        self.export_action.triggered.connect(self._export_settings)  # Переносим сюда
-        self.import_action.triggered.connect(self._import_settings)  # Переносим сюда
+        self.export_action = self._create_action("Экспорт данных", self._export_settings)  # Используем self.
+        self.import_action = self._create_action("Импорт данных", self._import_settings)  # Используем self.
         export_menu.addActions([self.export_action, self.import_action])
 
         # Меню "Справка"
         help_menu = menubar.addMenu("Справка")
-        self.about_action = QAction("О программе", self)  # Используем self.
-        self.about_action.triggered.connect(self._show_about_dialog)
+        self.about_action = self._create_action("О программе", self._show_about_dialog)  # Используем self.
         help_menu.addAction(self.about_action)
+
+    def _create_action(self, text, slot, parent=None):
+        action = QAction(text, parent or self)
+        action.triggered.connect(slot)
+        return action
 
     def _open_theme_dialog(self):
         theme_list = list(THEMES.keys())
@@ -210,8 +191,21 @@ class MainWindow(QMainWindow):
         # Вкладка управления ПК
         self._setup_pc_management_tab()
         self.tabs.addTab(QWidget(), "В разработке")  # Заглушка
-
+        # Подключаем обработчики событий
+        self.inner_tabs.lastTabClosed.connect(self._add_default_tab)
+        self.inner_tabs.tabPinned.connect(self._on_tab_pinned)
+        self.inner_tabs.tabUnpinned.connect(self._on_tab_unpinned)
         self.apply_current_theme()
+
+    def _add_new_tab(self):
+        """Обработчик создания новой вкладки по запросу (например, нажатие '+')"""
+        print("Adding a new tab...")
+        tab = QWidget()  # Создаем новый виджет для вкладки
+        tab.setLayout(QVBoxLayout())  # Устанавливаем layout
+        tab_index = self.inner_tabs.addTab(tab, "Новая сессия")  # Добавляем вкладку
+        self.inner_tabs.setCurrentIndex(tab_index)  # Переключаемся на новую вкладку
+        self._setup_tab_content(tab)  # Настраиваем содержимое
+        print(f"New tab added and content set: {tab}")
 
     def _setup_header(self, layout):
         """Создание шапки с логотипом"""
@@ -244,39 +238,53 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(tab, "Управление ПК")
         layout = QVBoxLayout(tab)
 
-        # Внутренние вкладки
-        self.inner_tabs = QTabWidget()
-        self.inner_tabs.setTabsClosable(True)
-        self.inner_tabs.tabCloseRequested.connect(self._close_inner_tab)
+        # Инициализация кастомного табвиджета
+        self.inner_tabs = DetachableTabWidget()
+        self.inner_tabs.tabAdded.connect(self._setup_tab_content)  # Подключаем сигнал
+        self.inner_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
 
-        # Кнопка добавления вкладок
-        add_btn = QPushButton("+")
-        add_btn.clicked.connect(self._add_session_tab)
-        self.inner_tabs.setCornerWidget(add_btn, Qt.TopRightCorner)
+        # Добавляем первую вкладку по умолчанию
+        self._add_default_tab()
 
         layout.addWidget(self.inner_tabs)
-        self.inner_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
-        self._add_session_tab()
 
-    def _add_session_tab(self):
-        """Добавление новой сессии"""
-        tab = QWidget()
-        self.inner_tabs.addTab(tab, "Новая сессия")
+    def _setup_tab_content(self, tab):
+        print(f"Setting up content for tab: {tab}")  # Отладочный вывод
+        tab.setProperty('pinned', False)
         layout = QVBoxLayout(tab)
+        print(f"Layout set for tab: {layout}")  # Проверим, создается ли layout
 
-        # Блок подключения
         self._setup_connection_block(layout, tab)
-
-        # Поиск
-        self._setup_search(layout, tab)  # ✅ Передаём tab
-
-        # Таблицы
+        self._setup_search(layout, tab)
         self._setup_tables(layout, tab)
 
-        # Первоначальная загрузка данных
         self._load_tab_data(tab)
-
         update_emitter.data_updated.connect(lambda: self._load_tab_data(tab))
+
+    def _on_tab_pinned(self, index):
+        """Обработка закрепления вкладки"""
+
+    def _on_tab_unpinned(self, index):
+        """Обработка открепления вкладки"""
+
+    def _add_default_tab(self):
+        """Добавление вкладки по умолчанию"""
+        tab = QWidget()  # Создаем новый виджет
+        self.inner_tabs.addTab(tab, "Сессия 1")  # Добавляем вкладку
+        self._setup_tab_content(tab)  # Настраиваем содержимое
+
+    def _update_tab_style(self, index):
+        """Обновление стиля закрепленной вкладки"""
+        tab_bar = self.inner_tabs.tabBar()
+        pinned = self.inner_tabs.widget(index).property('pinned')
+
+        if pinned:
+            tab_bar.setTabText(index, f"📌 {tab_bar.tabText(index)}")
+            tab_bar.setTabIcon(index, QIcon(":/icons/pin.png"))  # Добавьте свою иконку
+        else:
+            text = tab_bar.tabText(index).replace("📌 ", "")
+            tab_bar.setTabText(index, text)
+            tab_bar.setTabIcon(index, QIcon())
 
     def _create_ip_input_handler(self, input_field):
         def handler(event: QKeyEvent):
@@ -317,29 +325,16 @@ class MainWindow(QMainWindow):
         return handler
 
     def _setup_connection_block(self, layout, tab):
-        """Блок подключения к ПК"""
+        """Блок подключения к ПК с кастомным вводом IP"""
         connection_box = QGroupBox("Подключение к ПК")
         conn_layout = QHBoxLayout()
 
-        # Поле ввода IP с валидацией
-        tab.ip_input = QLineEdit()
-        tab.ip_input.setPlaceholderText("Введите IP-адрес (например: 192.168.1.1)")
+        # Используем наш кастомный виджет для ввода IP
+        tab.ip_input = IPLineEdit()
         tab.ip_input.setFixedHeight(28)
 
-        # Регулярное выражение для валидации IPv4
-        ip_regex = QRegularExpression(
-            r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
-        validator = QRegularExpressionValidator(ip_regex, self)
-        tab.ip_input.setValidator(validator)
-
-        # Разрешаем ввод точек и цифр с основной и дополнительной клавиатуры
-        tab.ip_input.setInputMethodHints(Qt.ImhFormattedNumbersOnly)
-
-        # Горячая клавиша Enter
-        tab.ip_input.returnPressed.connect(lambda: self._handle_connection(tab))
-
         # Кнопка подключения
-        tab.connect_btn = QPushButton("Подключиться (Ctrl+Enter)")
+        tab.connect_btn = QPushButton("Подключиться")
         tab.connect_btn.setShortcut(QKeySequence("Ctrl+Return"))
         tab.connect_btn.setFixedHeight(28)
         tab.connect_btn.clicked.connect(lambda: self._handle_connection(tab))
@@ -348,6 +343,7 @@ class MainWindow(QMainWindow):
         conn_layout.addWidget(tab.connect_btn)
         connection_box.setLayout(conn_layout)
         layout.addWidget(connection_box)
+
 
     def _export_settings(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -411,8 +407,7 @@ class MainWindow(QMainWindow):
         recent_layout = QVBoxLayout()
 
         tab.recent_table = QTableWidget(0, 2)
-        tab.recent_table.setHorizontalHeaderLabels(["IP", "Дата"])
-        tab.recent_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._configure_table(tab.recent_table, ["IP", "Дата"])
 
         # Кнопка очистки списка
         clear_recent_btn = QPushButton("Очистить список")
@@ -427,8 +422,7 @@ class MainWindow(QMainWindow):
         workstation_layout = QVBoxLayout()
 
         tab.workstation_table = QTableWidget(0, 4)
-        tab.workstation_table.setHorizontalHeaderLabels(["РМ", "IP", "ОС", "Последнее подключение"])
-        tab.workstation_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._configure_table(tab.workstation_table, ["РМ", "IP", "ОС", "Последнее подключение"], editable_columns=[0])
 
         # Добавляем контекстное меню (ПКМ -> Удалить)
         tab.workstation_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -452,13 +446,20 @@ class MainWindow(QMainWindow):
             lambda row, col, t=tab: self._handle_workstation_double_click(row, col, t)
         )
 
-        # Включаем сортировку
-        tab.recent_table.setSortingEnabled(True)
-        tab.workstation_table.setSortingEnabled(True)
-
         # Сохраняем изменения номера РМ в БД
         tab.workstation_table.itemChanged.connect(
             lambda item: self._save_workstation_changes(item, tab.workstation_table))
+
+    def _configure_table(self, table, headers, editable_columns=[]):
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.setSortingEnabled(True)
+        for col in range(len(headers)):
+            if col not in editable_columns:
+                for row in range(table.rowCount()):
+                    if item := table.item(row, col):
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
 
     def _save_workstation_changes(self, item, table):
         """Сохраняет изменения в номере РМ в базе данных"""
@@ -549,26 +550,22 @@ class MainWindow(QMainWindow):
             update_emitter.data_updated.emit()
 
             # Создание новой вкладки подключения
-            os_tab = QWidget()
-            os_tab.setAttribute(Qt.WA_DeleteOnClose)
-            os_layout = QVBoxLayout(os_tab)
-
-            if os_name == "Windows":
-                windows_gui = WindowsWindow(ip=ip, os_name=os_name)
-                windows_gui.setAttribute(Qt.WA_DeleteOnClose)
-                os_layout.addWidget(windows_gui)
-                windows_gui.setMaximumHeight(400)
-            else:
-                linux_gui = LinuxWindow(ip=ip, os_name=os_name)
-                linux_gui.setAttribute(Qt.WA_DeleteOnClose)
-                os_layout.addWidget(linux_gui)
-
-            os_tab.setLayout(os_layout)
+            os_tab = self._create_os_tab(os_name, ip)
             self.inner_tabs.addTab(os_tab, f"{os_name} - {ip}")
+            # Делаем новую вкладку активной
+            self.inner_tabs.setCurrentIndex(self.inner_tabs.indexOf(os_tab))
 
         except Exception as e:
-            self.show_notification(f"Критическая ошибка: {str(e)}", "error")
-            print(f"Error traceback: {traceback.format_exc()}")
+            self.show_notification(f"Ошибка: {str(e)}", "error")
+            logger.error(traceback.format_exc())
+
+    def _create_os_tab(self, os_name, ip):
+        os_tab = QWidget()
+        os_tab.setAttribute(Qt.WA_DeleteOnClose)
+        os_layout = QVBoxLayout(os_tab)
+        gui_class = WindowsWindow if os_name == "Windows" else LinuxWindow
+        os_layout.addWidget(gui_class(ip=ip, os_name=os_name))
+        return os_tab
 
     def _load_recent_connections(self, table):
         """Загрузка недавних подключений"""
@@ -584,13 +581,9 @@ class MainWindow(QMainWindow):
             table.setItem(row, 1, date_item)
 
     def _load_workstation_map(self, table):
-        """Загрузка карты рабочих мест"""
-        data = get_workstation_map()
-        table.setRowCount(len(data))
-        table.blockSignals(True)  # Отключаем обработку изменений
-
+        table.blockSignals(True)
         try:
-            data = get_workstation_map()
+            data = get_workstation_map()  # <-- Был дубль
             table.setRowCount(len(data))
 
             for row, (rm, ip, os_name, last_seen) in enumerate(data):
@@ -674,7 +667,6 @@ class MainWindow(QMainWindow):
         font = QApplication.font()
         font.setPointSize(self.settings.get("font_size", 12))
         QApplication.setFont(font)
-
 class SettingsDialog(QDialog):
     def __init__(self, current_settings):
         super().__init__()
