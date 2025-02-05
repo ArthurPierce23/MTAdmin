@@ -1,166 +1,105 @@
-# db_manager.py (оптимизированная версия)
+# /database/db_manager.py
+
 import sqlite3
-import logging
-from pathlib import Path
+import os
 from datetime import datetime
 
-logger = logging.getLogger(__name__)
-DB_PATH = Path(__file__).parent / "mtadmin.sqlite"
-
-# Схема таблиц
-TABLES = {
-    'recent_connections': '''
-        CREATE TABLE IF NOT EXISTS recent_connections (
-            id INTEGER PRIMARY KEY,
-            ip TEXT NOT NULL,
-            date TEXT NOT NULL
-        )
-    ''',
-    'workstation_map': '''
-        CREATE TABLE IF NOT EXISTS workstation_map (
-            ip TEXT PRIMARY KEY,
-            rm_number TEXT DEFAULT '',
-            os TEXT DEFAULT 'Неизвестно',
-            last_seen TEXT NOT NULL
-        )
-    '''
-}
-
-# Индексы
-INDEXES = [
-    "CREATE INDEX IF NOT EXISTS idx_wm_ip ON workstation_map(ip)",
-    "CREATE INDEX IF NOT EXISTS idx_rc_date ON recent_connections(date)"
-]
+# Определяем путь к базе данных (mtadmin.sqlite) рядом с файлом db_manager.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "mtadmin.sqlite")
 
 
 def init_db():
-    """Инициализация БД с обработкой ошибок"""
+    """
+    Инициализирует базу данных.
+    Если базы данных или таблицы не существует, она будет создана.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS connections (
+            ip TEXT PRIMARY KEY,
+            os TEXT,
+            last_connection TEXT,
+            rm TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+
+def add_connection(ip: str, os_name: str, last_connection: datetime):
+    """
+    Добавляет или обновляет запись в базе данных.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
     try:
-        DB_PATH.parent.mkdir(exist_ok=True)
-        with sqlite3.connect(DB_PATH, timeout=5) as conn:
-            cursor = conn.cursor()
-
-            # Создание таблиц
-            for table in TABLES.values():
-                cursor.execute(table)
-
-            # Создание индексов
-            for index in INDEXES:
-                cursor.execute(index)
-
-            # Триггер для ограничения истории (последние 50 записей)
-            cursor.execute('''
-                CREATE TRIGGER IF NOT EXISTS limit_recent_connections 
-                AFTER INSERT ON recent_connections
-                BEGIN
-                    DELETE FROM recent_connections 
-                    WHERE id NOT IN (
-                        SELECT id 
-                        FROM recent_connections 
-                        ORDER BY date DESC 
-                        LIMIT 50
-                    );
-                END
-            ''')
-    except Exception as e:
-        logger.error(f"Database initialization failed: {str(e)}")
-        raise
+        cursor.execute('''
+            INSERT INTO connections (ip, os, last_connection, rm)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(ip) DO UPDATE SET last_connection = excluded.last_connection
+        ''', (ip, os_name, last_connection.isoformat(), None))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass
+    finally:
+        conn.close()
 
 
-def add_recent_connection(ip: str):
-    """Добавление в историю подключений с обработкой ошибок"""
-    try:
-        with sqlite3.connect(DB_PATH, timeout=5) as conn:
-            cursor = conn.cursor()
-            now = datetime.now().isoformat()  # Используем Python-время
 
-            cursor.execute('''
-                INSERT INTO recent_connections (ip, date)
-                VALUES (?, ?)
-            ''', (ip, now))
-    except sqlite3.Error as e:
-        logger.error(f"Error adding recent connection: {str(e)}")
-        raise
+def get_all_connections():
+    """
+    Возвращает список всех записей из базы данных.
 
+    :return: Список кортежей (rm, ip, os, last_connection)
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT rm, ip, os, last_connection
+        FROM connections
+        ORDER BY last_connection DESC
+    ''')
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
-def get_recent_connections(limit: int = 10):
-    """Получение последних подключений с сортировкой"""
-    try:
-        with sqlite3.connect(DB_PATH, timeout=5) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT ip, date 
-                FROM recent_connections 
-                ORDER BY date DESC 
-                LIMIT ?
-            ''', (limit,))
-            return cursor.fetchall()
-    except sqlite3.Error as e:
-        logger.error(f"Error getting recent connections: {str(e)}")
-        return []
+def update_rm(ip: str, new_rm: str):
+    """
+    Обновляет номер РМ для указанного IP-адреса.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE connections
+        SET rm = ?
+        WHERE ip = ?
+    ''', (new_rm, ip))
+    conn.commit()
+    conn.close()
 
-
-def clear_recent_connections():
-    """Очистка истории подключений"""
-    try:
-        with sqlite3.connect(DB_PATH, timeout=5) as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM recent_connections")
-    except sqlite3.Error as e:
-        logger.error(f"Error clearing recent connections: {str(e)}")
-        raise
-
-
-def add_to_workstation_map(ip: str, os_name: str, rm_number: str = ""):
-    """Добавление/обновление рабочей станции"""
-    try:
-        with sqlite3.connect(DB_PATH, timeout=5) as conn:
-            cursor = conn.cursor()
-            now = datetime.now().isoformat()  # Используем Python-время
-
-            cursor.execute('''
-                INSERT INTO workstation_map (ip, os, last_seen, rm_number)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(ip) DO UPDATE SET
-                    os = excluded.os,
-                    last_seen = excluded.last_seen,
-                    rm_number = COALESCE(excluded.rm_number, rm_number)
-            ''', (ip, os_name, now, rm_number))
-    except sqlite3.Error as e:
-        logger.error(f"Error updating workstation map: {str(e)}")
-        raise
+def delete_rm(ip: str):
+    """
+    Удаляет запись с указанным IP-адресом из базы данных.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        DELETE FROM connections WHERE ip = ?
+    ''', (ip,))
+    conn.commit()
+    conn.close()
 
 
-def get_workstation_map(sort_by: str = 'ip'):
-    """Получение карты рабочих мест с сортировкой"""
-    valid_sorts = ['ip', 'last_seen', 'rm_number']
-    sort_by = sort_by if sort_by in valid_sorts else 'ip'
+if __name__ == "__main__":
+    # Инициализация базы данных для тестирования
+    init_db()
+    # Пример добавления подключения
+    add_connection("192.168.0.10", "Windows", datetime.now())
+    add_connection("192.168.0.10", "Windows", datetime.now())  # Повторное подключение — дубликат не будет добавлен.
+    add_connection("192.168.0.11", "Linux", datetime.now())
 
-    try:
-        with sqlite3.connect(DB_PATH, timeout=5) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(f'''
-                SELECT rm_number, ip, os, last_seen 
-                FROM workstation_map 
-                ORDER BY {sort_by}
-            ''')
-            return cursor.fetchall()
-    except sqlite3.Error as e:
-        logger.error(f"Error getting workstation map: {str(e)}")
-        return []
-
-
-def remove_from_workstation_map(ip: str):
-    """Удаление рабочей станции"""
-    try:
-        with sqlite3.connect(DB_PATH, timeout=5) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                DELETE FROM workstation_map 
-                WHERE ip = ?
-            ''', (ip,))
-    except sqlite3.Error as e:
-        logger.error(f"Error removing from workstation map: {str(e)}")
-        raise
+    # Вывод всех записей
+    for record in get_all_connections():
+        print(record)

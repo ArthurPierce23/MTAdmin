@@ -4,12 +4,11 @@ from PySide6.QtWidgets import (
     QDialog,
     QListWidget,
     QPushButton,
-    QVBoxLayout,
-    QLabel
+    QVBoxLayout
 )
 from PySide6.QtGui import QRegularExpressionValidator, QKeyEvent
 from PySide6.QtCore import Qt, QRegularExpression
-from styles import apply_theme
+from old_project.styles import apply_theme
 
 
 class IPLineEdit(QLineEdit):

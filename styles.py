@@ -1,124 +1,129 @@
+# styles.py
+
 NOTIFICATION_STYLES = {
     "default": {
         "background": "rgba(255, 255, 255, 0.95)",
         "border": "1px solid rgba(0, 0, 0, 0.1)",
-        "text": "#2E3440",
-        "shadow": "0 4px 6px rgba(0, 0, 0, 0.1)"
+        "text": "#333333",
+        "shadow": "0px 2px 4px rgba(0, 0, 0, 0.15)",
+        "icon": ""
     },
     "error": {
-        "background": "rgba(255, 235, 235, 0.97)",
-        "border": "1px solid #FFB3B3",
-        "text": "#CC0000",
-        "icon": "🚨"
+        "background": "#ffe6e6",
+        "border": "1px solid #ff4d4d",
+        "text": "#cc0000",
+        "icon": "⚠️"
     },
     "success": {
-        "background": "rgba(235, 255, 240, 0.97)",
-        "border": "1px solid #B3FFC2",
+        "background": "#e6ffe6",
+        "border": "1px solid #4dff4d",
         "text": "#008000",
         "icon": "✅"
     }
 }
 
 THEMES = {
+    "Без темы": None,  # Отключает применение CSS
     "Светлая": {
-        "background": "#FFFFFF",
-        "foreground": "#212529",
-        "button_bg": "#F8F9FA",
-        "button_fg": "#212529",
-        "button_hover": "#E9ECEF",
-        "menu_bg": "#F8F9FA",
-        "menu_fg": "#212529",
-        "menu_hover": "#E9ECEF",
-        "tab_bg": "#F8F9FA",
-        "tab_fg": "#495057",
-        "tab_hover": "#E9ECEF",
-        "groupbox_bg": "#F8F9FA",
-        "groupbox_fg": "#212529",
-        "table_bg": "#FFFFFF",
-        "table_header": "#E9ECEF",
-        "highlight": "#4DABF7",
-        "border": "1px solid #DEE2E6",
-        "border_radius": "6px",
-        "padding": "8px",
-        "font_family": "'Segoe UI', system-ui",
-        "disabled": "#B0B0B0",
-        "scroll_handle": "#DEE2E6",
+        "background": "#ffffff",
+        "foreground": "#333333",
+        "button_bg": "#f5f5f5",
+        "button_fg": "#333333",
+        "button_hover": "#e0e0e0",
+        "menu_bg": "#ffffff",
+        "menu_fg": "#333333",
+        "menu_hover": "#e0e0e0",
+        "tab_bg": "#f5f5f5",
+        "tab_fg": "#333333",
+        "tab_hover": "#e0e0e0",
+        "groupbox_bg": "#ffffff",
+        "groupbox_fg": "#333333",
+        "table_bg": "#ffffff",
+        "table_header": "#e0e0e0",
+        "highlight": "#4d90fe",
+        "border": "1px solid #dddddd",
+        "border_radius": "4px",
+        "padding": "6px",
+        "font_family": "Segoe UI, sans-serif",
+        "disabled": "#a0a0a0",
+        "scroll_handle": "#dddddd",
     },
 
     "Темная": {
-        "background": "#1A1B1E",
-        "foreground": "#E9ECEF",
-        "button_bg": "#2C2E33",
-        "button_fg": "#E9ECEF",
-        "button_hover": "#373A40",
-        "menu_bg": "#2C2E33",
-        "menu_fg": "#E9ECEF",
-        "menu_hover": "#373A40",
-        "tab_bg": "#2C2E33",
-        "tab_fg": "#ADB5BD",
-        "tab_hover": "#373A40",
-        "groupbox_bg": "#2C2E33",
-        "groupbox_fg": "#E9ECEF",
-        "table_bg": "#25262B",
-        "table_header": "#373A40",
-        "highlight": "#4DABF7",
-        "border": "1px solid #373A40",
-        "border_radius": "6px",
-        "padding": "8px",
-        "font_family": "'Segoe UI', system-ui",
-        "disabled": "#606060",
-        "scroll_handle": "#373A40",
+        "background": "#222222",
+        "foreground": "#dddddd",
+        "button_bg": "#333333",
+        "button_fg": "#dddddd",
+        "button_hover": "#444444",
+        "menu_bg": "#333333",
+        "menu_fg": "#dddddd",
+        "menu_hover": "#444444",
+        "tab_bg": "#333333",
+        "tab_fg": "#cccccc",
+        "tab_hover": "#444444",
+        "groupbox_bg": "#333333",
+        "groupbox_fg": "#dddddd",
+        "table_bg": "#2a2a2a",
+        "table_header": "#444444",
+        "highlight": "#4d90fe",
+        "border": "1px solid #444444",
+        "border_radius": "4px",
+        "padding": "6px",
+        "font_family": "Segoe UI, sans-serif",
+        "disabled": "#888888",
+        "scroll_handle": "#444444",
     },
 
     "Material Blue": {
-        "background": "#F8F9FA",
-        "foreground": "#212529",
-        "button_bg": "#E3F2FD",
-        "button_fg": "#1976D2",
-        "button_hover": "#BBDEFB",
-        "menu_bg": "#E3F2FD",
-        "menu_fg": "#0D47A1",
-        "menu_hover": "#BBDEFB",
-        "tab_bg": "#E3F2FD",
-        "tab_fg": "#0D47A1",
-        "tab_hover": "#BBDEFB",
-        "groupbox_bg": "#F3F9FF",
-        "groupbox_fg": "#1565C0",
-        "table_bg": "#FFFFFF",
-        "table_header": "#BBDEFB",
-        "highlight": "#2196F3",
-        "border": "1px solid #BBDEFB",
-        "border_radius": "6px",
+        "background": "rgba(245, 245, 245, 0.85)",
+        "foreground": "#333333",
+        "button_bg": "#e3f2fd",
+        "button_fg": "#0d47a1",
+        "button_hover": "#bbdefb",
+        "menu_bg": "rgba(227, 242, 253, 0.8)",
+        "menu_fg": "#0d47a1",
+        "menu_hover": "#bbdefb",
+        "tab_bg": "#e3f2fd",
+        "tab_fg": "#0d47a1",
+        "tab_hover": "#bbdefb",
+        "groupbox_bg": "rgba(255, 255, 255, 0.85)",
+        "groupbox_fg": "#0d47a1",
+        "table_bg": "#ffffff",
+        "table_header": "#bbdefb",
+        "highlight": "#2196f3",
+        "border": "1px solid #bbdefb",
+        "border_radius": "8px",
         "padding": "8px",
-        "font_family": "'Segoe UI', system-ui",
-        "disabled": "#90A4AE",
-        "scroll_handle": "#BBDEFB",
+        "font_family": "Segoe UI, sans-serif",
+        "disabled": "#90a4ae",
+        "scroll_handle": "#bbdefb",
     },
 
     "Deep Space": {
-        "background": "#0A0A0A",
+        "background": "rgba(10, 10, 10, 0.9)",
         "foreground": "#E9ECEF",
         "button_bg": "#1A1A1A",
         "button_fg": "#74B3CE",
         "button_hover": "#2A2A2A",
-        "menu_bg": "#1A1A1A",
+        "menu_bg": "rgba(26, 26, 26, 0.8)",
         "menu_fg": "#74B3CE",
         "menu_hover": "#2A2A2A",
         "tab_bg": "#1A1A1A",
         "tab_fg": "#74B3CE",
         "tab_hover": "#2A2A2A",
-        "groupbox_bg": "#1A1A1A",
+        "groupbox_bg": "rgba(26, 26, 26, 0.8)",
         "groupbox_fg": "#74B3CE",
-        "table_bg": "#0A0A0A",
+        "table_bg": "rgba(10, 10, 10, 0.9)",
         "table_header": "#2A2A2A",
         "highlight": "#74B3CE",
         "border": "1px solid #2A2A2A",
-        "border_radius": "6px",
-        "padding": "8px",
+        "border_radius": "10px",
+        "padding": "10px",
         "font_family": "'Roboto Mono', monospace",
         "disabled": "#616E88",
         "scroll_handle": "#2A2A2A",
     },
+
     "Nord": {
         "background": "#2E3440",
         "foreground": "#D8DEE9",
@@ -176,19 +181,19 @@ THEMES = {
         "button_bg": "#1A1A2F",
         "button_fg": "#00FFEE",
         "button_hover": "#2A2A4F",
-        "menu_bg": "#1A1A2F",
+        "menu_bg": "rgba(26, 26, 47, 0.9)",  # Лёгкая прозрачность
         "menu_fg": "#FF0055",
         "menu_hover": "#2A2A4F",
         "tab_bg": "#1A1A2F",
         "tab_fg": "#00FFEE",
         "tab_hover": "#2A2A4F",
-        "groupbox_bg": "#1A1A2F",
+        "groupbox_bg": "rgba(26, 26, 47, 0.85)",
         "groupbox_fg": "#FF0055",
         "table_bg": "#0A0A12",
         "table_header": "#2A2A4F",
         "highlight": "#FF0055",
         "border": "2px solid #00FFEE",
-        "border_radius": "0px",
+        "border_radius": "8px",  # Чуть мягче
         "padding": "10px",
         "font_family": "'Rajdhani', sans-serif",
         "scroll_handle": "#00FFEE",
@@ -196,237 +201,138 @@ THEMES = {
     },
 
     "Forest": {
-        "background": "#1A2F1A",
+        "background": "#132A13",
         "foreground": "#C8E6C9",
-        "button_bg": "#2B4B2B",
+        "button_bg": "#1F3D1F",
         "button_fg": "#A5D6A7",
-        "button_hover": "#3B6B3B",
-        "menu_bg": "#2B4B2B",
+        "button_hover": "#2D522D",
+        "menu_bg": "#1F3D1F",
         "menu_fg": "#81C784",
-        "menu_hover": "#3B6B3B",
-        "tab_bg": "#2B4B2B",
+        "menu_hover": "#2D522D",
+        "tab_bg": "#1F3D1F",
         "tab_fg": "#A5D6A7",
-        "tab_hover": "#3B6B3B",
-        "groupbox_bg": "#2B4B2B",
+        "tab_hover": "#2D522D",
+        "groupbox_bg": "#1F3D1F",
         "groupbox_fg": "#81C784",
-        "table_bg": "#1A2F1A",
-        "table_header": "#3B6B3B",
+        "table_bg": "#132A13",
+        "table_header": "#2D522D",
         "highlight": "#81C784",
         "border": "1px solid #4CAF50",
-        "border_radius": "8px",
-        "padding": "8px",
+        "border_radius": "10px",
+        "padding": "10px",
         "font_family": "'Open Sans', sans-serif",
         "scroll_handle": "#4CAF50",
-        "disabled": "#6B8B6B",  # Для темы Forest
-
-
+        "disabled": "#6B8B6B",
     }
 }
 
 
 def apply_theme(theme_name):
-    """Улучшенная функция с защитой от отсутствующих ключей"""
+    """Возвращает CSS-строку для применения темы с защитой от отсутствующих ключей."""
     base_theme = THEMES.get("Светлая", {})
-    current_theme = THEMES.get(theme_name, {})
-
-    # Создаем копию темы с дефолтными значениями
+    current_theme = THEMES.get(theme_name, {})  # Если нет, берется Светлая
     safe_theme = {
-        # Обязательные параметры по умолчанию
         "disabled": "#808080",
-        "scroll_handle": "#CCCCCC",
-        "font_family": "Arial",
-        "button_hover": "#E0E0E0",
-        "tab_hover": "#E0E0E0",
-        "menu_hover": "#E0E0E0",
-        # Базовые значения из светлой темы
+        "scroll_handle": "#cccccc",
+        "font_family": "Arial, sans-serif",
+        "button_hover": "#e0e0e0",
+        "tab_hover": "#e0e0e0",
+        "menu_hover": "#e0e0e0",
         **base_theme,
-        # Текущая тема с высшим приоритетом
         **current_theme
     }
-
-
-
-    # Автозаполнение производных цветов
     safe_theme.setdefault("table_header", safe_theme["button_hover"])
     safe_theme.setdefault("border", f"1px solid {safe_theme['button_hover']}")
 
-    """Применяет тему с учётом всех элементов интерфейса"""
-    colors = THEMES.get(theme_name, THEMES["Светлая"])
-
+    # Формируем CSS с более компактными правилами
     return f"""
-        QWidget:disabled {{
-            color: {safe_theme['disabled']};
-            background: {safe_theme.get('button_bg', '#F0F0F0')};
-        }}
-            /* Выпадающие списки */
-        QComboBox {{
-            background: {colors["button_bg"]};
-            color: {colors["button_fg"]};
-            border: {colors["border"]};
-            border-radius: {colors["border_radius"]};
-            padding: 4px;
-        }}
-        QComboBox::drop-down {{
-            subcontrol-origin: padding;
-            subcontrol-position: right top;
-            width: 20px;
-            border-left: {colors["border"]};
-        }}
-        
-        /* Чекбоксы и радиокнопки */
-        QCheckBox::indicator, QRadioButton::indicator {{
-            width: 16px;
-            height: 16px;
-            border: {colors["border"]};
-            border-radius: {colors["border_radius"]};
-        }}
-        QCheckBox::indicator:checked {{
-            background: {colors["highlight"]};
-        }}
-        QRadioButton::indicator:checked {{
-            background: radial-gradient({colors["highlight"]} 50%, transparent 50%);
-        }}
-        
-        /* Прогресс-бар */
-        QProgressBar {{
-            border: {colors["border"]};
-            border-radius: {colors["border_radius"]};
-            text-align: center;
-        }}
-        QProgressBar::chunk {{
-            background: {colors["highlight"]};
-            border-radius: {colors["border_radius"]};
-        }}
-        
-        /* Отключенные элементы */
-        QWidget:disabled {{
-            color: {colors["disabled"]};
-            background: {colors["button_bg"]};
-        }}
-        
-        /* Подсказки */
-        QToolTip {{
-            background: {colors["background"]};
-            color: {colors["foreground"]};
-            border: {colors["border"]};
-            border-radius: {colors["border_radius"]};
-        }}
-        
-        /* Разделители */
-        QSplitter::handle {{
-            background: {colors["border"]};
-            width: 4px;
-        }}
-        
-        /* Иконки */
-        QLabel[icon="true"] {{
-            qproperty-alignment: AlignCenter;
-            padding: 8px;
-            background: {colors["button_bg"]};
-            border-radius: {colors["border_radius"]};
-        }}
-        /* Основные стили */
         QWidget {{
-            background: {colors["background"]};
-            color: {colors["foreground"]};
-            font-family: {colors["font_family"]};
+            background: {safe_theme['background']};
+            color: {safe_theme['foreground']};
+            font-family: {safe_theme['font_family']};
             font-size: 13px;
             border: none;
         }}
-
-        /* Кнопки */
         QPushButton {{
-            background: {colors["button_bg"]};
-            color: {colors["button_fg"]};
-            border: {colors["border"]};
-            border-radius: {colors["border_radius"]};
-            padding: {colors["padding"]};
+            background: {safe_theme['button_bg']};
+            color: {safe_theme['button_fg']};
+            border: {safe_theme['border']};
+            border-radius: {safe_theme['border_radius']};
+            padding: {safe_theme['padding']};
             min-width: 80px;
         }}
         QPushButton:hover {{
-            background: {colors["button_hover"]};
+            background: {safe_theme['button_hover']};
         }}
         QPushButton:pressed {{
-            background: {colors["highlight"]};
-            color: {colors["background"]};
+            background: {safe_theme['highlight']};
+            color: {safe_theme['background']};
         }}
-
-        /* Таблицы */
+        QLineEdit, QTextEdit {{
+            background: {safe_theme['background']};
+            border: {safe_theme['border']};
+            border-radius: {safe_theme['border_radius']};
+            padding: 4px;
+        }}
         QTableWidget {{
-            background: {colors["table_bg"]};
-            gridline-color: {colors["border"]};
+            background: {safe_theme['table_bg']};
+            gridline-color: {safe_theme['border']};
         }}
         QHeaderView::section {{
-            background: {colors["table_header"]};
-            padding: 8px;
+            background: {safe_theme['table_header']};
+            padding: 6px;
         }}
-
-        /* Вкладки */
         QTabWidget::pane {{
-            border: {colors["border"]};
+            border: {safe_theme['border']};
         }}
         QTabBar::tab {{
-            background: {colors["tab_bg"]};
-            color: {colors["tab_fg"]};
-            padding: 8px 16px;
+            background: {safe_theme['tab_bg']};
+            color: {safe_theme['tab_fg']};
+            padding: 6px 12px;
             border-bottom: 2px solid transparent;
         }}
         QTabBar::tab:hover {{
-            background: {colors["tab_hover"]};
+            background: {safe_theme['tab_hover']};
         }}
         QTabBar::tab:selected {{
-            border-bottom: 2px solid {colors["highlight"]};
+            border-bottom: 2px solid {safe_theme['highlight']};
         }}
-
-        /* Групповые блоки */
         QGroupBox {{
-            background: {colors["groupbox_bg"]};
-            color: {colors["groupbox_fg"]};
-            border: {colors["border"]};
-            border-radius: {colors["border_radius"]};
+            background: {safe_theme['groupbox_bg']};
+            color: {safe_theme['groupbox_fg']};
+            border: {safe_theme['border']};
+            border-radius: {safe_theme['border_radius']};
             margin-top: 1em;
-            padding-top: 10px;
+            padding-top: 8px;
         }}
         QGroupBox::title {{
             subcontrol-origin: margin;
-            left: 10px;
+            left: 8px;
             padding: 0 3px;
         }}
-
-        /* Текстовые поля */
-        QTextEdit, QLineEdit {{
-            background: {colors["background"]};
-            border: {colors["border"]};
-            border-radius: {colors["border_radius"]};
+        QToolTip {{
+            background: {safe_theme['background']};
+            color: {safe_theme['foreground']};
+            border: {safe_theme['border']};
+            border-radius: {safe_theme['border_radius']};
             padding: 4px;
         }}
-
-        /* Меню */
         QMenuBar {{
-            background: {colors["menu_bg"]};
+            background: {safe_theme['menu_bg']};
             padding: 4px;
         }}
         QMenuBar::item {{
             padding: 4px 8px;
         }}
-        QMenuBar::item:selected {{
-            background: {colors["menu_hover"]};
+        QMenuBar::item:selected, QMenu::item:selected {{
+            background: {safe_theme['menu_hover']};
         }}
-        QMenu {{
-            background: {colors["menu_bg"]};
-            border: {colors["border"]};
-        }}
-        QMenu::item:selected {{
-            background: {colors["menu_hover"]};
-        }}
-
-        /* Скроллбары */
         QScrollBar:vertical {{
             width: 10px;
-            background: {colors["background"]};
+            background: {safe_theme['background']};
         }}
         QScrollBar::handle:vertical {{
-            background: {colors["border"]};
+            background: {safe_theme['scroll_handle']};
             min-height: 20px;
         }}
     """.replace('\n', ' ').strip()

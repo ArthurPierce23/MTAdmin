@@ -172,4 +172,4 @@ cython_debug/
 
 settings.json
 
-/database/mtadmin.sqlite
+/old_project/database/mtadmin.sqlite

@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTabWidget, QLabel, QPushButton,
     QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QGroupBox, QDialog, QMessageBox, QListWidget, QInputDialog, QMenu
+    QGroupBox, QMessageBox, QListWidget, QInputDialog, QMenu
 )
 from PySide6.QtCore import Qt, QTimer
 from linux_gui.auth import AuthDialog
@@ -16,8 +16,8 @@ import platform
 import logging
 import paramiko
 import shutil
-from notification import Notification, NotificationManager
-from styles import NOTIFICATION_STYLES
+from old_project.notification import Notification, NotificationManager
+from old_project.styles import NOTIFICATION_STYLES
 
 logger = logging.getLogger(__name__)
 

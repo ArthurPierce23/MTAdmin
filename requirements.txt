@@ -4,3 +4,7 @@ PyQt6
 pypsrp
 keyring
 paramiko
+requests-kerberos
+pywinrm
+requests-credssp
+pypsexec

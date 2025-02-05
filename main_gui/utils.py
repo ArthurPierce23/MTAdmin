@@ -1,115 +1,111 @@
 import re
-import platform
 import subprocess
+import platform
 import socket
-import struct
-import concurrent.futures
-from functools import lru_cache
+from typing import Optional, Tuple
 
 
-def is_valid_ip(ip):
-    """Проверяет корректность IPv4-адреса."""
-    pattern = r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
-    return bool(re.match(pattern, ip))
+def is_potential_ip(text: str) -> bool:
+    """Проверяет, состоит ли строка только из цифр и точек (потенциальный IP)."""
+    return bool(re.match(r'^[\d.]+$', text))
 
 
-@lru_cache(maxsize=128)
-def _ping_ip(ip, timeout=1):
-    """Проверяет доступность IP через ping."""
-    try:
-        command = ['ping', '-c', '1', '-W', str(timeout), ip] if platform.system().lower() != 'windows' else \
-                  ['ping', '-n', '1', '-w', str(timeout * 1000), ip]
-        return subprocess.call(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout + 1) == 0
-    except subprocess.TimeoutExpired:
+def is_partial_ip(text: str) -> bool:
+    """Проверяет, введён ли частичный IP (например, '192.168.')."""
+    return bool(re.match(r'^(\d{1,3}\.){0,3}\d{0,3}$', text))
+
+
+def is_valid_ip(ip: str) -> bool:
+    """
+    Проверяет, что строка соответствует формату A.B.C.D, где каждое число от 0 до 255.
+    """
+    pattern = re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
+    if not pattern.match(ip):
         return False
+    parts = ip.split('.')
+    return all(0 <= int(part) <= 255 for part in parts)
 
 
-def _get_os_via_ttl(ttl):
-    """Определяет ОС по значению TTL."""
-    if ttl is None:
-        return "Неизвестно"
-    if ttl <= 64:
-        return "Linux"
-    elif 65 <= 128:
-        return "Windows"
-    return "Неизвестно"
+def is_valid_hostname(hostname: str) -> bool:
+    """
+    Проверяет, является ли строка допустимым именем ПК (буквы, цифры, дефис, от 1 до 63 символов).
+    """
+    return bool(re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$', hostname))
 
 
-def _check_tcp_port(ip, port, timeout=1):
-    """Проверяет, открыт ли TCP-порт."""
+def is_valid_input(text: str) -> bool:
+    """
+    Проверяет, корректен ли ввод – либо валидный IP, либо валидное имя ПК, либо частичный IP.
+    """
+    return is_valid_ip(text) or is_valid_hostname(text) or is_partial_ip(text)
+
+
+def ping_ip(ip: str, timeout: int = 1000) -> Tuple[bool, str]:
+    """
+    Выполняет ping заданного IP-адреса.
+
+    :param ip: IP-адрес для проверки
+    :param timeout: таймаут (в мс для Windows, в секундах для Linux)
+    :return: Кортеж (доступен ли хост, вывод команды ping)
+    """
+    system = platform.system().lower()
+    if system == 'windows':
+        cmd = f"ping -n 1 -w {timeout} {ip}"
+        shell_flag = True
+    else:
+        timeout_sec = max(1, int(timeout / 1000))
+        cmd = ["ping", "-c", "1", "-W", str(timeout_sec), ip]
+        shell_flag = False
+
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(timeout)
-            return s.connect_ex((ip, port)) == 0
-    except socket.error:
-        return False
+        output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, universal_newlines=True, shell=shell_flag)
+        return True, output
+    except subprocess.CalledProcessError as e:
+        return False, e.output
+    except UnicodeDecodeError:
+        return False, "Ошибка декодирования вывода ping."
 
 
-def _detect_os_via_sockets(ip):
-    """Анализ TCP-ответов без ICMP для определения ОС"""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1)
-            s.connect((ip, 135))  # RPC Endpoint Mapper (обычно Windows)
-            data = s.recv(1024)
-            if data:
-                return "Windows"
-    except (socket.timeout, socket.error):
-        pass
-    return "Неизвестно"
+def detect_os(ip: str) -> Optional[str]:
+    """
+    Определяет операционную систему удалённого ПК по TTL в ответе ping.
 
-
-def _get_ttl(ip, timeout=1):
-    """Получает TTL пакета (если не блокируется брандмауэром)"""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP) as s:
-            s.settimeout(timeout)
-            packet = struct.pack('!BBHHH', 8, 0, 0, 0, 0)  # ICMP Echo Request
-            s.sendto(packet, (ip, 1))
-            response = s.recvfrom(256)[0]
-            return response[8] if len(response) > 8 else None
-    except (PermissionError, socket.error):
+    :param ip: IP-адрес для проверки
+    :return: "Windows", "Linux/Unix" или None, если определить не удалось.
+    """
+    reachable, output = ping_ip(ip)
+    if not reachable:
         return None
 
+    match = re.search(r"TTL=(\d+)", output, re.IGNORECASE)
+    if match:
+        ttl = int(match.group(1))
 
-def detect_os(ip, timeout=2):
-    """Определяет ОС через TTL, порты и TCP-анализ"""
+        if 110 <= ttl <= 130:
+            return "Windows"
+        elif 50 <= ttl <= 70:
+            return "Linux/Unix"
+        elif ttl > 200:
+            return "Сетевое устройство (роутер, коммутатор и т. д.)"
 
+    return None
+
+
+def get_pc_name(ip: str) -> Optional[str]:
+    """
+    Получает имя ПК по IP через обратный DNS-запрос.
+
+    :param ip: IP-адрес
+    :return: Имя ПК или None, если не удалось определить.
+    """
     if not is_valid_ip(ip):
-        return "Неверный IP"
+        return None
 
-    # Проверяем доступность IP
-    if not _ping_ip(ip, timeout):
-        print(f"[DEBUG] {ip} не отвечает на ping.")
-        return "Недоступен"
+    if not ping_ip(ip)[0]:
+        return None  # Хост недоступен, нет смысла делать обратный DNS-запрос.
 
-    # 🔥 Ключевые Windows и Linux порты
-    windows_ports = [3389, 49003, 445, 137, 139, 135, 5985, 5986]
-    linux_ports = [22]
-
-    all_ports = windows_ports + linux_ports
-
-    # 🔥 Проверяем порты параллельно
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(lambda port: _check_tcp_port(ip, port, timeout), all_ports))
-
-    open_ports = {port: results[i] for i, port in enumerate(all_ports)}
-
-    print(f"[DEBUG] Открытые порты: {open_ports}")
-
-    # 🔥 Логика определения ОС:
-    if any(open_ports[p] for p in windows_ports):
-        return "Windows"
-
-    if open_ports[22]:
-        return "Linux"  # Теперь Linux определяется корректно!
-
-    # 🔥 Если порты не помогли — проверяем TTL
-    ttl = _get_ttl(ip, timeout)
-    print(f"[DEBUG] TTL: {ttl}")
-
-    if ttl:
-        return _get_os_via_ttl(ttl)
-
-    # 🔥 Если вообще ничего не сработало — пробуем анализ TCP-ответов
-    return _detect_os_via_sockets(ip)
+    try:
+        hostname, _, _ = socket.gethostbyaddr(ip)
+        return hostname
+    except socket.herror:
+        return None

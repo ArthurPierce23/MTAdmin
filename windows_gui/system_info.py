@@ -1,101 +1,115 @@
-from pypsrp.client import Client, PowerShell
-from pypsrp.wsman import WSMan
+import logging
 import json
+from pypsrp.powershell import PowerShell, RunspacePool
+from pypsrp.wsman import WSMan
 
+logger = logging.getLogger(__name__)
 
-def get_system_info(ip):
-    """Получение системной информации с удаленного ПК используя текущие учетные данные"""
-    try:
-        # Настраиваем соединение с использованием текущих учетных данных
-        wsman = WSMan(
-            server=ip,
-            ssl=False,
-            auth="negotiate",  # Автоматический выбор аутентификации (Kerberos/NTLM)
-            encryption="never"
-        )
+class SystemInfo:
+    def __init__(self, hostname: str):
+        self.hostname = hostname
+        # Убираем создание сессии в конструкторе, чтобы не делиться объектом между потоками.
+        # self.session = self._init_ps_session()
 
-        with Client(wsman=wsman) as client:
-            # Получаем информацию о процессоре
-            cpu_script = """
-            Get-CimInstance Win32_Processor | 
-            Select-Object -First 1 LoadPercentage |
-            ConvertTo-Json
-            """
-            cpu_result = client.execute_ps(cpu_script)
-            cpu_data = json.loads(cpu_result)
-            cpu_usage = float(cpu_data['LoadPercentage'])
+    def _init_ps_session(self) -> RunspacePool | None:
+        try:
+            wsman = WSMan(
+                server=self.hostname,
+                auth="negotiate",
+                ssl=False,
+                encryption="auto",
+                cert_validation=False,
+                connection_timeout=15
+            )
+            pool = RunspacePool(wsman)
+            pool.open()
+            return pool
+        except Exception as e:
+            logger.error(f"Connection Error: {str(e)}")
+            return None
 
-            # Получаем информацию о памяти
-            ram_script = """
-            Get-CimInstance Win32_OperatingSystem | 
-            Select-Object FreePhysicalMemory, TotalVisibleMemorySize |
-            ConvertTo-Json
-            """
-            ram_result = client.execute_ps(ram_script)
-            ram_data = json.loads(ram_result)
+    def get_system_info(self) -> dict:
+        # Создаем сессию непосредственно в этом методе.
+        session = self._init_ps_session()
+        if not session:
+            return {"error": "WinRM connection failed"}
 
-            ram_total = int(ram_data['TotalVisibleMemorySize']) / 1024 ** 2  # GB
-            ram_free = int(ram_data['FreePhysicalMemory']) / 1024 ** 2  # GB
-            ram_used = ram_total - ram_free
-            ram_percent = (ram_used / ram_total) * 100
+        ps_script = r"""
+$ErrorActionPreference = "Stop"
+try {
+    # CPU Information
+    $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+    $cpu_load = if ($cpu.LoadPercentage) { $cpu.LoadPercentage } else { $null }
 
-            # Получаем информацию о дисках
-            disk_script = """
-            Get-CimInstance Win32_LogicalDisk | 
-            Where-Object { $_.DriveType -eq 3 } |
-            Select-Object DeviceID, Size, FreeSpace, FileSystem |
-            ConvertTo-Json
-            """
-            disk_result = client.execute_ps(disk_script)
-            disks_data = json.loads(disk_result)
+    # RAM Information
+    $os = Get-CimInstance Win32_OperatingSystem
+    $ram_total = if ($os.TotalVisibleMemorySize) { [math]::Round($os.TotalVisibleMemorySize/1MB, 2) } else { 0 }
+    $ram_free = if ($os.FreePhysicalMemory) { [math]::Round($os.FreePhysicalMemory/1MB, 2) } else { 0 }
 
-            disks = []
-            for disk in disks_data:
-                if disk['Size'] is None:
-                    continue
-                size_gb = int(disk['Size']) / 1024 ** 3
-                free_gb = int(disk['FreeSpace']) / 1024 ** 3
-                used_gb = size_gb - free_gb
+    # Disk Information
+    $disks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+        $total = if ($_.Size) { [math]::Round($_.Size/1GB, 2) } else { 0 }
+        $free = if ($_.FreeSpace) { [math]::Round($_.FreeSpace/1GB, 2) } else { 0 }
 
-                disks.append({
-                    'mount': disk['DeviceID'],
-                    'filesystem': disk['FileSystem'],
-                    'total': round(size_gb, 2),
-                    'used': round(used_gb, 2),
-                    'free': round(free_gb, 2),
-                    'percent_used': round((used_gb / size_gb) * 100, 1) if size_gb > 0 else 0
-                })
-
-            return {
-                'cpu_usage': cpu_usage,
-                'memory': {
-                    'total_gb': round(ram_total, 2),
-                    'used_gb': round(ram_used, 2),
-                    'percent_used': round(ram_percent, 1)
-                },
-                'disks': disks,
-                'error': None
-            }
-
-    except Exception as e:
-        return {
-            'error': f"Error: {str(e)}",
-            'cpu_usage': None,
-            'memory': None,
-            'disks': None
+        [PSCustomObject]@{
+            Letter = $_.DeviceID
+            TotalGB = $total
+            FreeGB = $free
+            UsedGB = [math]::Round($total - $free, 2)
+            UsedPercent = if ($total -gt 0) { [math]::Round(($total - $free)/$total*100, 2) } else { 0 }
         }
+    }
 
+    # Prepare result
+    [PSCustomObject]@{
+        CPU = @{
+            Load = $cpu_load
+            Cores = $cpu.NumberOfLogicalProcessors
+        }
+        RAM = @{
+            TotalGB = $ram_total
+            FreeGB = $ram_free
+            UsedGB = [math]::Round($ram_total - $ram_free, 2)
+            UsedPercent = if ($ram_total -gt 0) { [math]::Round(($ram_total - $ram_free)/$ram_total*100, 2) } else { 0 }
+        }
+        Disks = $disks
+    } | ConvertTo-Json -Depth 3 -Compress
+}
+catch {
+    [PSCustomObject]@{
+        Error = $_.Exception.Message
+        Details = $_.ScriptStackTrace
+    } | ConvertTo-Json -Compress
+}
+"""
+        try:
+            ps = PowerShell(session)
+            ps.add_script(ps_script)
+            output = ps.invoke()
 
-# Пример использования
-if __name__ == "__main__":
-    target_ip = "192.168.1.100"  # Замените на IP целевого компьютера
-    system_info = get_system_info(target_ip)
+            if ps.streams.error:
+                errors = "\n".join(str(e) for e in ps.streams.error)
+                return {"error": f"PowerShell errors: {errors}"}
 
-    if system_info['error']:
-        print("Error:", system_info['error'])
-    else:
-        print(f"CPU Usage: {system_info['cpu_usage']}%")
-        print(f"Memory Usage: {system_info['memory']['percent_used']}%")
-        print("Disks:")
-        for disk in system_info['disks']:
-            print(f"  {disk['mount']} ({disk['filesystem']}): {disk['percent_used']}% used")
+            json_str = "".join(str(o) for o in output)
+            data = json.loads(json_str)
+
+            if "Error" in data:
+                return {"error": data.get("Error"), "details": data.get("Details")}
+
+            return data
+
+        except json.JSONDecodeError as e:
+            error_msg = f"JSON parsing error: {str(e)}\nRaw output: {json_str}"
+            logger.error(error_msg)
+            return {"error": error_msg}
+
+        except Exception as e:
+            logger.error(f"Execution Error: {str(e)}")
+            return {"error": str(e)}
+        finally:
+            # Закрываем сессию, если она была успешно создана
+            try:
+                session.close()
+            except Exception:
+                pass

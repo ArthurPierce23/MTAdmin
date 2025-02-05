@@ -1,6 +1,6 @@
 import sys
 from PySide6.QtWidgets import QApplication
-from main_gui.main_window import MainWindow
+from old_project.main_gui import MainWindow
 from database.db_manager import init_db
 
 def main():
@@ -10,6 +10,8 @@ def main():
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+
 
 if __name__ == "__main__":
     main()

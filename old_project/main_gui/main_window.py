@@ -6,36 +6,37 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QDialog, QMessageBox, QSizePolicy
 )
 from PySide6.QtGui import QIcon, QPixmap, QFont, QAction, QKeyEvent, QKeySequence, QValidator
-from PySide6.QtCore import Qt, QObject, Signal, QThread
-from styles import apply_theme, THEMES
+from PySide6.QtCore import QObject, Signal, QThread
+from old_project.styles import apply_theme, THEMES
 from database.db_manager import (
     add_recent_connection, get_recent_connections,
     add_to_workstation_map, get_workstation_map, init_db
 )
-from main_gui.utils import is_valid_ip, detect_os
-from database.db_manager import remove_from_workstation_map, clear_recent_connections
+from old_project.main_gui import is_valid_ip, detect_os
+from database.db_manager import remove_from_workstation_map, clear_recent_connections, update_workstation_rm
 from PySide6.QtWidgets import QFileDialog, QDialogButtonBox, QSpinBox
-from settings import load_settings, save_settings, SETTINGS_FILE
+from old_project.settings import load_settings, save_settings, SETTINGS_FILE
 from linux_gui.linux_window import LinuxWindow
-from windows_gui.windows_window import WindowsWindow
+from old_project.windows_gui.windows_window import WindowsWindow
 import platform
-from notification import Notification, NotificationManager
-from styles import NOTIFICATION_STYLES
+from old_project.notification import Notification, NotificationManager
+from old_project.styles import NOTIFICATION_STYLES
 import traceback
 import logging
-from .tab_widgets import DetachableTabWidget
+#from .tab_widgets import DetachableTabWidget
+import socket
 
 
 logger = logging.getLogger(__name__)
 
 
-from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QTabBar, QWidget, QVBoxLayout, QLabel
+from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QLabel
 from PySide6.QtCore import Qt
-from .tab_widgets import DetachableTabWidget, DetachableTabBar
+from .tab_widgets import DetachableTabWidget
 from .ui_components import IPLineEdit, ThemeDialog
 
 class ConnectionThread(QThread):
-    finished = Signal(str, str, str)  # ip, os_name, error
+    finished = Signal(str, str, str, str)  # Добавляем hostname в сигнал
 
     def __init__(self, ip):
         super().__init__()
@@ -44,18 +45,26 @@ class ConnectionThread(QThread):
     def run(self):
         try:
             if not is_valid_ip(self.ip):
-                self.finished.emit(self.ip, "", "Неверный формат IP")
+                self.finished.emit(self.ip, "", "Неверный формат IP", self.ip)
                 return
 
             os_name = detect_os(self.ip)
             if os_name in ["Недоступен", "Ошибка проверки"]:
-                self.finished.emit(self.ip, "", f"Адрес {self.ip} недоступен")
+                self.finished.emit(self.ip, "", f"Адрес {self.ip} недоступен", self.ip)
                 return
 
-            self.finished.emit(self.ip, os_name, "")  # Передаем данные в основной поток
+            # Определяем hostname для Windows
+            hostname = self.ip
+            if os_name == "Windows":
+                try:
+                    hostname = socket.gethostbyaddr(self.ip)[0]
+                except (socket.herror, socket.gaierror):
+                    hostname = self.ip  # Оставляем IP, если не удалось разрешить
+
+            self.finished.emit(self.ip, os_name, "", hostname)
 
         except Exception as e:
-            self.finished.emit(self.ip, "", f"Ошибка: {str(e)}")
+            self.finished.emit(self.ip, "", f"Ошибка: {str(e)}", self.ip)
 
 
 class UpdateEmitter(QObject):
@@ -466,7 +475,6 @@ class MainWindow(QMainWindow):
     def _save_workstation_changes(self, item, table):
         """Сохраняет изменения в номере РМ в базе данных"""
         try:
-            # Игнорируем программные изменения
             if item.column() != 0 or not table.isPersistentEditorOpen(item):
                 return
 
@@ -475,20 +483,16 @@ class MainWindow(QMainWindow):
                 return
 
             ip_item = table.item(row, 1)
-            os_item = table.item(row, 2)
-
-            if not ip_item or not os_item:
-                return  # Не показываем уведомление
+            if not ip_item:
+                return
 
             ip = ip_item.text()
             new_rm = item.text().strip()
-            os_name = os_item.text()
 
-            # Обновляем запись в базе данных (пустой RM допустим)
-            remove_from_workstation_map(ip)
-            add_to_workstation_map(ip, os_name, new_rm)
-            # Показываем уведомление только при явном изменении
+            # Обновляем только номер РМ
+            update_workstation_rm(ip, new_rm)
             self.show_notification("Изменения сохранены", "success")
+            update_emitter.data_updated.emit()
 
         except Exception as e:
             logger.error(f"Ошибка сохранения: {str(e)}")
@@ -512,6 +516,8 @@ class MainWindow(QMainWindow):
             self.show_notification("Некорректный IP-адрес", "error")
             return
 
+
+
         # Обновленный код обработки подключения
         local_os = platform.system()
         tab.connect_btn.setEnabled(False)
@@ -519,8 +525,11 @@ class MainWindow(QMainWindow):
 
         try:
             thread = ConnectionThread(ip)
+            # Добавляем hostname в лямбду
             thread.finished.connect(
-                lambda ip, os_name, err: self._handle_connection_result(tab, ip, os_name, err, thread, local_os))
+                lambda ip, os_name, err, hostname: self._handle_connection_result(
+                    tab, ip, os_name, err, thread, local_os, hostname)
+            )
             self.threads.append(thread)
             thread.start()
         except Exception as e:
@@ -528,7 +537,7 @@ class MainWindow(QMainWindow):
             tab.connect_btn.setEnabled(True)
             tab.connect_btn.setText("Подключиться")
 
-    def _handle_connection_result(self, tab, ip, os_name, error, thread, local_os):
+    def _handle_connection_result(self, tab, ip, os_name, error, thread, local_os, hostname):
         try:
             if thread in self.threads:
                 self.threads.remove(thread)
@@ -551,22 +560,35 @@ class MainWindow(QMainWindow):
             tab.ip_input.clear()
             update_emitter.data_updated.emit()
 
-            # Создание новой вкладки подключения
-            os_tab = self._create_os_tab(os_name, ip)
-            self.inner_tabs.addTab(os_tab, f"{os_name} - {ip}")
-            # Делаем новую вкладку активной
+            # Создание новой вкладки с hostname
+            os_tab = self._create_os_tab(os_name, ip, hostname)
+            self.inner_tabs.addTab(os_tab, f"{os_name} - {hostname}")
             self.inner_tabs.setCurrentIndex(self.inner_tabs.indexOf(os_tab))
 
         except Exception as e:
             self.show_notification(f"Ошибка: {str(e)}", "error")
             logger.error(traceback.format_exc())
 
-    def _create_os_tab(self, os_name, ip):
+    def _create_os_tab(self, os_name, ip, hostname):
         os_tab = QWidget()
         os_tab.setAttribute(Qt.WA_DeleteOnClose)
         os_layout = QVBoxLayout(os_tab)
-        gui_class = WindowsWindow if os_name == "Windows" else LinuxWindow
-        os_layout.addWidget(gui_class(ip=ip, os_name=os_name))
+
+        try:
+            # Проверка валидности хоста
+            valid_host = hostname if is_valid_ip(hostname) else ip
+            if os_name == "Windows":
+                window = WindowsWindow(ip=valid_host, os_name=os_name)
+                os_layout.addWidget(window)
+            else:
+                window = LinuxWindow(ip=valid_host, os_name=os_name)
+                os_layout.addWidget(window)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось создать сессию: {str(e)}")
+            os_tab.deleteLater()
+            return
+
         return os_tab
 
     def _load_recent_connections(self, table):
