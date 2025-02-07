@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QGroupBox, QHeaderView
+    QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QGroupBox, QHeaderView, QSizePolicy
 )
 from PySide6.QtCore import Qt
 from notifications import Notification
@@ -10,7 +10,7 @@ class RecentConnectionsBlock(QWidget):
     def __init__(self, pc_connection_block=None):
         super().__init__()
         self.pc_connection_block = pc_connection_block
-        self._last_filter = None  # Для контроля повторного уведомления при фильтрации
+        self._last_filter = None  # Для контроля повторного уведомления при фильтрации (больше не используется)
         self.init_ui()
         self.clear_button.clicked.connect(self.clear_connections)
         self.connections_table.itemDoubleClicked.connect(self.on_item_double_clicked)
@@ -18,29 +18,46 @@ class RecentConnectionsBlock(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout()
-        connections_group = QGroupBox("Недавние подключения")
-        group_layout = QVBoxLayout()
 
+        connections_group = QGroupBox("📡 Недавние подключения")
+        connections_group.setObjectName("groupBox")  # Применяем стилизацию
+
+        group_layout = QVBoxLayout()
+        group_layout.setContentsMargins(10, 10, 10, 10)
+        group_layout.setSpacing(8)
+
+        # 🔎 Поле поиска
         search_layout = QHBoxLayout()
-        search_label = QLabel("Поиск:")
+        search_label = QLabel("🔍 Поиск:")
+        search_label.setObjectName("searchLabel")
+
         self.search_input = QLineEdit()
+        self.search_input.setObjectName("inputField")  # Поле ввода стилизуем
         self.search_input.setPlaceholderText("Введите IP или дату")
-        self.search_input.textChanged.connect(self.filter_connections)  # Подключаем фильтрацию
+        self.search_input.textChanged.connect(self.filter_connections)
 
         search_layout.addWidget(search_label)
         search_layout.addWidget(self.search_input)
         group_layout.addLayout(search_layout)
 
+        # 📋 Таблица подключений
         self.connections_table = QTableWidget(0, 2)
-        self.connections_table.setHorizontalHeaderLabels(["IP", "Дата"])
+        self.connections_table.setObjectName("connectionsTable")
+        self.connections_table.setHorizontalHeaderLabels(["💻 IP", "📅 Дата"])
+        self.connections_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.connections_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
         group_layout.addWidget(self.connections_table)
 
-        self.clear_button = QPushButton("Очистить список")
-        group_layout.addWidget(self.clear_button)
+        # ❌ Кнопка очистки
+        self.clear_button = QPushButton("🗑 Очистить список")
+        self.clear_button.setObjectName("dangerButton")  # Красная кнопка
+        self.clear_button.setFixedHeight(36)
+        group_layout.addWidget(self.clear_button, alignment=Qt.AlignRight)
 
         connections_group.setLayout(group_layout)
         main_layout.addWidget(connections_group)
-        self.connections_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
         self.setLayout(main_layout)
 
     def filter_connections(self):
@@ -54,9 +71,10 @@ class RecentConnectionsBlock(QWidget):
             if is_visible:
                 found = True
 
-        # Показываем уведомление, если ничего не найдено (не повторяя его при каждом символе)
-        if filter_text and not found and filter_text != self._last_filter:
-            Notification("Ничего не найдено", "warning", duration=3000, parent=self).show_notification()
+        # Уведём уведомления при поиске отключены,
+        # чтобы не возникал спам уведомлений при каждом изменении текста.
+        # Если требуется уведомлять о том, что ничего не найдено, можно добавить дополнительную логику,
+        # например, показывать уведомление один раз по завершении ввода (debounce).
         self._last_filter = filter_text
 
     def clear_connections(self):
@@ -71,7 +89,7 @@ class RecentConnectionsBlock(QWidget):
         self.connections_table.insertRow(row)
 
         ip_item = QTableWidgetItem(ip)
-        ip_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)  # Запрещаем редактирование
+        ip_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 
         date_item = QTableWidgetItem(date)
         date_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
@@ -106,3 +124,10 @@ class RecentConnectionsBlock(QWidget):
         for row_data in records:
             ip, date = row_data[1], row_data[3]  # ip и last_connection
             self.add_connection(ip, date, notify=False)
+
+    def moveEvent(self, event):
+        """Обновляем позиции уведомлений при перемещении главного окна."""
+        from notifications import Notification  # Если требуется, можно обновлять позиции уведомлений
+        for notif in Notification.get_active_notifications():
+            notif.update_position()
+        super().moveEvent(event)

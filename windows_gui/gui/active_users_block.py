@@ -1,14 +1,16 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QGroupBox
 )
 from PySide6.QtCore import QTimer
 import subprocess
 import platform
 import logging
 from notifications import Notification
+from PySide6.QtCore import Qt
 
 logger = logging.getLogger(__name__)
+
 
 class ActiveUsers(QWidget):
     def __init__(self, hostname, parent=None):
@@ -27,8 +29,8 @@ class ActiveUsers(QWidget):
             'Disconnected': '⚫ Разъединено',
         }
         self._init_ui()
+        # Первоначальное обновление через 100 мс, затем автообновление каждую минуту
         QTimer.singleShot(100, self.update_info)
-
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self.update_info)
         self.refresh_timer.start(60000)
@@ -38,25 +40,42 @@ class ActiveUsers(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(15)
 
+        self.group_box = QGroupBox("💻 Активные пользователи")
+        self.group_box.setObjectName("groupBox")  # Применяем стилизацию из styles.py
+        group_layout = QVBoxLayout()
+        group_layout.setContentsMargins(10, 10, 10, 10)
+        group_layout.setSpacing(10)
+
         self.info_label = QLabel("👥 Активные пользователи")
-        self.info_label.setStyleSheet("font-size: 16px; font-weight: 600;")
-        layout.addWidget(self.info_label)
+        self.info_label.setObjectName("title")  # Применяем стиль заголовка
+        group_layout.addWidget(self.info_label)
 
         self.table = QTableWidget(0, 3)
+        self.table.setObjectName("usersTable")  # Применяем стилизацию из styles.py
         self.table.setHorizontalHeaderLabels(["👤 Пользователь", "🔑 Тип входа", "🔄 Статус"])
         self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(True)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setShowGrid(False)
-        self.table.setMinimumHeight(200)  # Увеличиваем высоту таблицы
-        layout.addWidget(self.table)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setFixedHeight(150)
+        group_layout.addWidget(self.table)
 
         self.refresh_button = QPushButton("🔄 Обновить данные")
+        self.refresh_button.setObjectName("refreshButton")  # Применяем стилизацию из styles.py
         self.refresh_button.setToolTip("Обновить список активных сессий")
-        self.refresh_button.clicked.connect(lambda: [self.update_info(), Notification('Обновление завершено!', 'success').show_notification()])
-        self.refresh_button.clicked.connect(self.update_info)
-        layout.addWidget(self.refresh_button)
+        self.refresh_button.clicked.connect(self._on_refresh_clicked)
+        group_layout.addWidget(self.refresh_button)
+
+        self.group_box.setLayout(group_layout)
+        layout.addWidget(self.group_box)
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        separator.setObjectName("separator")  # Применяем стилизацию из styles.py
+        layout.addWidget(separator)
+
+    def _on_refresh_clicked(self):
+        self.update_info()
+        Notification('Обновление завершено!', 'success').show_notification()
 
     def update_info(self):
         result = self.get_active_sessions()
@@ -69,9 +88,8 @@ class ActiveUsers(QWidget):
             self._update_table(sessions)
             count = len(sessions)
             if count:
-                status_icon = "✅"
                 sessions_text = self.declension_sessions(count)
-                self.info_label.setText(f"{status_icon} Активные пользователи ({count} {sessions_text})")
+                self.info_label.setText(f"✅ Активные пользователи ({count} {sessions_text})")
             else:
                 self.info_label.setText("ℹ️ Нет активных пользователей")
 
@@ -79,15 +97,22 @@ class ActiveUsers(QWidget):
         self.table.setRowCount(len(sessions))
         for row, session in enumerate(sessions):
             user_item = QTableWidgetItem(f"👤 {session['user']}")
+            user_item.setFlags(user_item.flags() & ~Qt.ItemIsEditable)
+
             logon_type = session["logon_type"]
             type_icon = "💻" if logon_type == "Локальный" else "🌐"
             type_item = QTableWidgetItem(f"{type_icon} {logon_type}")
+            type_item.setFlags(type_item.flags() & ~Qt.ItemIsEditable)
+
             status_text = session["status"]
             status_item = QTableWidgetItem(self.STATUS_EMOJI.get(status_text, f"❔ {status_text}"))
             status_item.setToolTip(self._get_status_tooltip(status_text))
+            status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
+
             self.table.setItem(row, 0, user_item)
             self.table.setItem(row, 1, type_item)
             self.table.setItem(row, 2, status_item)
+
 
     def _get_status_tooltip(self, status):
         tooltips = {
@@ -106,6 +131,7 @@ class ActiveUsers(QWidget):
             sessions = self._parse_output(output, is_remote)
             return {"sessions": sessions}
         except Exception as e:
+            logger.exception("Ошибка получения активных сессий")
             return {"error": str(e)}
 
     def _run_remote_command(self, is_remote):
@@ -125,9 +151,7 @@ class ActiveUsers(QWidget):
         lines = [line.rstrip('\n') for line in output.split('\n') if line.strip()]
         if not lines:
             return sessions
-        if is_remote:
-            return self._parse_qwinsta(lines)
-        return self._parse_quser(lines)
+        return self._parse_qwinsta(lines) if is_remote else self._parse_quser(lines)
 
     def _parse_quser(self, lines):
         sessions = []
@@ -139,7 +163,7 @@ class ActiveUsers(QWidget):
             session_col = self._get_column_index(headers, ['SESSIONNAME', 'СЕАНС'])
             state_col = self._get_column_index(headers, ['STATE', 'СТАТУС'])
         except ValueError as e:
-            raise ValueError(f"Неизвестный формат вывода quser: {str(e)}")
+            raise ValueError(f"Неизвестный формат вывода quser: {e}")
         for line in lines[1:]:
             parts = self._split_line_by_positions(line, col_positions)
             username = parts[username_col] if username_col < len(parts) else ''
@@ -163,15 +187,13 @@ class ActiveUsers(QWidget):
             user_col = self._get_column_index(headers, ['USERNAME', 'ПОЛЬЗОВАТЕЛЬ'])
             state_col = self._get_column_index(headers, ['STATE', 'СТАТУС'])
         except ValueError as e:
-            raise ValueError(f"Неизвестный формат вывода qwinsta: {str(e)}")
+            raise ValueError(f"Неизвестный формат вывода qwinsta: {e}")
         for line in lines[1:]:
             parts = self._split_line_by_positions(line, col_positions)
             session_type = parts[session_col] if session_col < len(parts) else ''
             username = parts[user_col] if user_col < len(parts) else ''
             state = parts[state_col] if state_col < len(parts) else ''
-            if username and username not in self.EXCLUDED_USERNAMES:
-                if username.isdigit():
-                    continue
+            if username and username not in self.EXCLUDED_USERNAMES and not username.isdigit():
                 sessions.append({
                     "user": username,
                     "logon_type": self._get_session_type(session_type),
@@ -197,8 +219,7 @@ class ActiveUsers(QWidget):
         for i in range(len(positions) - 1):
             start = positions[i]
             end = positions[i + 1]
-            part = line[start:end].strip()
-            parts.append(part)
+            parts.append(line[start:end].strip())
         return parts
 
     def _get_column_index(self, headers, possible_names):
@@ -224,4 +245,3 @@ class ActiveUsers(QWidget):
         elif 2 <= remainder <= 4:
             return "сессии"
         return "сессий"
-

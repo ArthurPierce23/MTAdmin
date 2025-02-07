@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Интерактивный терминал</title>
+    <!-- Подключаем стили и скрипты xterm.js из CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+    <!-- QWebChannel для связи с Python -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <style>
+      html, body {
+        height: 100%;
+        width: 100%;
+        padding: 0;
+        margin: 0;
+        background: black;
+      }
+      #terminal {
+        height: 100%;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="terminal"></div>
+    <script>
+      // Инициализируем xterm.js
+      const term = new Terminal({
+          convertEol: true,
+          scrollback: 1000,
+          tabStopWidth: 8,
+      });
+      term.open(document.getElementById('terminal'));
+      term.focus();
+      // Выводим отладочное сообщение
+      term.write('Welcome to xterm.js\r\n');
+
+      // Настройка QWebChannel для связи с Python
+      new QWebChannel(qt.webChannelTransport, function(channel) {
+          window.bridge = channel.objects.bridge;
+
+          // При получении данных из Python записываем их в терминал
+          bridge.sendToTerminal.connect(function(data) {
+              term.write(data);
+          });
+
+          // При вводе данных пользователем отправляем их в Python
+          term.onData(function(data) {
+              bridge.receiveFromTerminal(data);
+          });
+      });
+    </script>
+  </body>
+</html>

@@ -8,3 +8,5 @@ requests-kerberos
 pywinrm
 requests-credssp
 pypsexec
+pyautogui
+pyte

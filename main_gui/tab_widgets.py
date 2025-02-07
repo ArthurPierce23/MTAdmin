@@ -1,9 +1,11 @@
 # tab_widgets.py
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QTabWidget, QMenu, QMainWindow, QMessageBox, QInputDialog
+    QTabWidget, QMenu, QMainWindow, QMessageBox, QInputDialog, QSpacerItem
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QIcon
+
 # Импортируем модифицированный PCConnectionBlock
 from main_gui.gui.pc_connection_block import PCConnectionBlock
 # Импортируем другие виджеты (например, RecentConnectionsBlock, WPMapBlock)
@@ -12,121 +14,144 @@ from main_gui.gui.wp_map_block import WPMapBlock
 # Импорт окон для подключения
 from windows_gui.gui.windows_window import WindowsWindow
 from linux_gui.gui.linux_window import LinuxWindow
-from main_gui.utils import detect_os, get_pc_name
+from styles import apply_theme
+from linux_gui.session_manager import SessionManager
+
 
 class DetachedWindow(QMainWindow):
-    def __init__(self, tabs_widget: 'DynamicTabs', parent: 'DynamicTabs', title: str):
+    def __init__(self, tabs_widget: 'DynamicTabs', parent: 'DynamicTabs', title: str, theme_name: str):
         """
-        tabs_widget – экземпляр DynamicTabs, который будет центральным виджетом.
-        parent – родительское DynamicTabs, куда можно вернуть вкладки.
+        Отсоединённое окно, куда переносится вкладка.
         """
         super().__init__()
         self.setWindowTitle(title)
         self.setGeometry(200, 200, 500, 600)
         self.setCentralWidget(tabs_widget)
         self.tabs_widget = tabs_widget
-        self.parent_tabs = parent  # Запоминаем главное окно
+        self.parent_tabs = parent
+        self.theme_name = theme_name
+        self.setStyleSheet(apply_theme(self.theme_name))
 
     def closeEvent(self, event):
         """
-        При закрытии окна переносим все вкладки обратно в главное окно.
-        Добавлена проверка на наличие окна в списке.
+        При закрытии окна все вкладки из отсоединённого окна возвращаются в родительский DynamicTabs.
         """
         for i in reversed(range(self.tabs_widget.count())):
             widget = self.tabs_widget.widget(i)
             title = self.tabs_widget.tabText(i)
             if isinstance(self.parent_tabs, DynamicTabs):
                 self.parent_tabs.add_existing_tab(widget, title)
-                if self in self.parent_tabs.detached_windows:  # Проверка на наличие окна в списке
+                if self in self.parent_tabs.detached_windows:
                     self.parent_tabs.detached_windows.remove(self)
         super().closeEvent(event)
 
+
 class DynamicTabs(QTabWidget):
-    def __init__(self, with_initial_tab=True):
+    def __init__(self, with_initial_tab=True, theme_name="Светлая"):
+        """
+        Основной виджет вкладок с поддержкой отсоединения, переименования, закрепления и т.д.
+        """
         super().__init__()
+        self.current_theme = theme_name
+        self.setObjectName("dynamicTabs")
         self.setTabsClosable(True)
         self.tabCloseRequested.connect(self.close_tab)
         self.setMovable(True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.open_context_menu)
         self.detached_windows = []
         self.pinned_tabs = set()
-        self.customContextMenuRequested.connect(self.open_context_menu)
-        self.addTabButton = QPushButton("+")
-        self.addTabButton.setFixedSize(30, 30)
-        self.addTabButton.setStyleSheet("""
-            QPushButton {
-                font-size: 18px;
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 5px;
-                margin-bottom: 5px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-        """)
+
+        # Устанавливаем фиксированную высоту таббара
+        self.tabBar().setFixedHeight(40)
+
+        # Создание кнопки "Добавить вкладку"
+        self.addTabButton = QPushButton("➕")
+        self.addTabButton.setObjectName("addTabButton")
         self.addTabButton.clicked.connect(self.add_new_tab)
 
+        # Контейнер для кнопки, выравненный по правому верхнему углу таббара
         corner_container = QWidget()
         corner_layout = QHBoxLayout(corner_container)
-        corner_layout.setContentsMargins(0, 0, 0, 0)
+        # Отступы: левый = 0, верх = 0, правый = 5, нижний = 0
+        corner_layout.setContentsMargins(0, 0, 5, -5)
         corner_layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         corner_layout.addWidget(self.addTabButton)
-        self.setCornerWidget(corner_container, Qt.TopRightCorner)
-        self.setStyleSheet("QTabWidget::corner { background: transparent; }")
+        corner_container.setLayout(corner_layout)
+
+        # Сохраним ссылку на контейнер для возможности управлять z-порядком
+        self.corner_widget = corner_container
+
+        # Устанавливаем контейнер как corner widget в верхнем правом углу
+        self.setCornerWidget(self.corner_widget, Qt.TopRightCorner)
+        # Сразу поднимаем его над остальными
+        self.corner_widget.raise_()
+
+        # Применяем тему (без дополнительных правил для QTabWidget::pane, чтобы сохранить границу)
+        self.setStyleSheet(apply_theme(self.current_theme))
 
         if with_initial_tab:
             self.add_new_tab()
 
+    def resizeEvent(self, event):
+        """
+        При изменении размеров гарантируем, что corner widget (кнопка "+") остается поверх.
+        """
+        super().resizeEvent(event)
+        if hasattr(self, 'corner_widget'):
+            self.corner_widget.raise_()
+
     @staticmethod
-    def create_tab_content(parent_tabs: 'DynamicTabs'):
+    def create_tab_content(self, parent_tabs: 'DynamicTabs', is_pc_connection_needed: bool = True) -> QWidget:
+        """
+        Создает содержимое новой вкладки.
+        Добавлен верхний отступ для предотвращения наложения на область таббара.
+        """
         new_tab = QWidget()
         main_layout = QVBoxLayout()
+        # Добавляем небольшой отступ сверху (например, 10px)
+        main_layout.setContentsMargins(0, 10, 0, 0)
 
-        # Создаем блок недавних подключений
+        # Создаем блоки для отображения подключения, списка недавних подключений и карты рабочих мест.
         recent_connections_block = RecentConnectionsBlock()
-        wp_map_block = WPMapBlock()  # 🔥 Объявляем wp_map_block перед использованием
-        # 🔥 Передаем wp_map_block в PCConnectionBlock
-        connection_block = PCConnectionBlock(recent_connections_block=recent_connections_block,
-                                             wp_map_block=wp_map_block)
 
-        # !!! ВАЖНО: Передаем тот же самый PCConnectionBlock в WPMapBlock !!!
+        if is_pc_connection_needed:
+            connection_block = PCConnectionBlock(recent_connections_block=recent_connections_block, wp_map_block=None)
+            main_layout.addWidget(connection_block)
+        else:
+            connection_block = None
+
         wp_map_block = WPMapBlock(pc_connection_block=connection_block)
 
-        # Передаем PCConnectionBlock в RecentConnectionsBlock (уже было)
+        if connection_block:
+            connection_block.wp_map_block = wp_map_block
         recent_connections_block.pc_connection_block = connection_block
-
-        # Подключаем сигнал успешного подключения к обработчику DynamicTabs
-        connection_block.connection_successful.connect(parent_tabs.handle_connection)
-
-        # Добавляем в макет
-        main_layout.addWidget(connection_block)
 
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout()
         bottom_layout.addWidget(recent_connections_block)
         bottom_layout.addWidget(wp_map_block)
-
         bottom_widget.setLayout(bottom_layout)
-        main_layout.addWidget(bottom_widget)
 
+        main_layout.addWidget(bottom_widget)
         new_tab.setLayout(main_layout)
+
         return new_tab
 
-    def add_new_tab(self, _checked=False, title="Новая сессия"):
-        content = self.create_tab_content(self)
+    def add_new_tab(self, _checked=False, title="Новая сессия", is_pc_connection_needed=True):
+        """
+        Добавляет новую вкладку с содержимым, созданным методом create_tab_content.
+        """
+        content = self.create_tab_content(self, is_pc_connection_needed)
         index = self.addTab(content, title)
         self.setCurrentIndex(index)
+        content.setStyleSheet(apply_theme(self.current_theme))
 
-    def add_existing_tab(self, widget, title="Новая сессия"):
+    def add_existing_tab(self, widget: QWidget, title="Новая сессия"):
         index = self.addTab(widget, title)
         self.setCurrentIndex(index)
 
     def handle_connection(self, os_name: str, pc_name: str, ip: str):
-        """
-        Обработка сигнала успешного подключения.
-        В зависимости от типа ОС добавляем новую вкладку с соответствующим интерфейсом.
-        """
         if os_name == "Windows":
             self.open_windows_gui(pc_name, ip)
         elif os_name == "Linux":
@@ -134,21 +159,33 @@ class DynamicTabs(QTabWidget):
         else:
             QMessageBox.warning(self, "Ошибка", "Не удалось определить операционную систему.")
 
-    def open_windows_gui(self, hostname, ip):
-        # Создаём виджет интерфейса для Windows и добавляем его как новую вкладку.
-        windows_widget = WindowsWindow(hostname, ip)
-        self.add_existing_tab(windows_widget, f"Windows: {hostname}")
+    def set_theme(self, theme_name: str):
+        self.current_theme = theme_name
+        self.setStyleSheet(apply_theme(theme_name))
+        for i in range(self.count()):
+            widget = self.widget(i)
+            if isinstance(widget, QWidget):
+                widget.setStyleSheet(apply_theme(theme_name))
+        for window in self.detached_windows:
+            window.setStyleSheet(apply_theme(theme_name))
+            if hasattr(window, 'tabs_widget'):
+                window.tabs_widget.set_theme(theme_name)
 
-    def open_linux_gui(self, ip):
-        # Создаём виджет интерфейса для Linux и добавляем его как новую вкладку.
-        linux_widget = LinuxWindow(ip)
-        self.add_existing_tab(linux_widget, f"Linux: {ip}")
+    def open_windows_gui(self, hostname: str, ip: str):
+        try:
+            windows_widget = WindowsWindow(hostname, ip)
+            self.add_existing_tab(windows_widget, f"Windows: {hostname}")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка подключения", f"Не удалось подключиться к {hostname}: {str(e)}")
 
-    def detach_tab(self, index):
-        """
-        Отрывает вкладку в отдельное окно.
-        Если вкладка закреплена или это единственная вкладка – отрыв не производится.
-        """
+    def open_linux_gui(self, ip: str):
+        try:
+            linux_widget = LinuxWindow(ip)
+            self.add_existing_tab(linux_widget, f"Linux: {ip}")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка подключения", f"Не удалось подключиться к {ip}: {str(e)}")
+
+    def detach_tab(self, index: int):
         if index in self.pinned_tabs or self.count() == 1:
             return
 
@@ -156,67 +193,80 @@ class DynamicTabs(QTabWidget):
         widget = self.widget(index)
         self.removeTab(index)
 
-        # Создаём новый экземпляр DynamicTabs без автодобавления вкладки
-        detached_tabs = DynamicTabs(with_initial_tab=False)
+        detached_tabs = DynamicTabs(with_initial_tab=False, theme_name=self.current_theme)
         detached_tabs.add_existing_tab(widget, title)
 
-        # Создаём новое окно
-        detached_window = DetachedWindow(detached_tabs, self, title)
+        detached_window = DetachedWindow(detached_tabs, self, title, self.current_theme)
+        detached_window.setStyleSheet(apply_theme(self.current_theme))
         self.detached_windows.append(detached_window)
         detached_window.show()
 
-    def close_tab(self, index):
-        """
-        Закрывает вкладку и сессию, если она открыта.
-        """
+    def close_tab(self, index: int):
         if index in self.pinned_tabs or self.count() == 1:
             return
 
         widget = self.widget(index)
-        if hasattr(widget, 'has_unsaved_changes') and widget.has_unsaved_changes():
-            reply = QMessageBox.question(self, 'Подтверждение закрытия',
-                                         'У вас есть несохраненные изменения. Закрыть вкладку?',
-                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                         QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.No:
-                return
+        if hasattr(widget, 'session_manager') and isinstance(widget.session_manager, SessionManager):
+            try:
+                widget.session_manager.close_session()
+            except Exception as e:
+                QMessageBox.warning(self, "Ошибка", f"Ошибка при закрытии SSH-сессии: {str(e)}")
 
-        # Закрываем сессию перед удалением вкладки
-        if hasattr(widget, 'close_session'):
-            widget.close_session()
+        if hasattr(widget, 'has_unsaved_changes') and widget.has_unsaved_changes():
+            reply = QMessageBox.question(
+                self,
+                'Подтверждение закрытия',
+                'У вас есть несохраненные изменения. Закрыть вкладку?',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
 
         self.removeTab(index)
 
+    def rename_tab(self, index: int):
+        current_title = self.tabText(index)
+        new_title, ok = QInputDialog.getText(self, "Переименовать вкладку", "Введите новое название:",
+                                             text=current_title)
+        if ok and new_title:
+            self.setTabText(index, new_title)
+
     def open_context_menu(self, position):
-        menu = QMenu()
         index = self.tabBar().tabAt(position)
         if index == -1:
-            return  # Клик вне вкладки
+            return
 
-        # Действия для контекстного меню
-        rename_tab_action = menu.addAction("Переименовать вкладку")
-        if index in self.pinned_tabs:
-            pin_tab_action = menu.addAction("Открепить вкладку")
-        else:
-            pin_tab_action = menu.addAction("Закрепить вкладку")
-        detach_tab_action = menu.addAction("Открыть в новом окне")
-        close_tab_action = menu.addAction("Закрыть вкладку")
-        close_others_action = menu.addAction("Закрыть другие вкладки")
-        close_right_action = menu.addAction("Закрыть вкладки справа")
-        # Если есть отсоединённые окна, предлагаем вернуть вкладку
-        reattach_action = None
+        menu = QMenu()
+        menu.setObjectName("tabMenu")
+
+        rename_tab_action = QAction("✏️ Переименовать", self)
+        pin_tab_action = QAction("📌 Открепить" if index in self.pinned_tabs else "📌 Закрепить", self)
+        detach_tab_action = QAction("🔄 Открыть отдельно", self)
+        close_tab_action = QAction("❌ Закрыть вкладку", self)
+        close_others_action = QAction("❌ Закрыть другие", self)
+        close_right_action = QAction("❌ Закрыть справа", self)
+
+        menu.addAction(rename_tab_action)
+        menu.addAction(pin_tab_action)
+        menu.addSeparator()
+        menu.addAction(detach_tab_action)
+        menu.addSeparator()
+        menu.addAction(close_tab_action)
+        menu.addAction(close_others_action)
+        menu.addAction(close_right_action)
+
         if any(w.tabs_widget.count() > 0 for w in self.detached_windows):
-            reattach_action = menu.addAction("Вернуть вкладку в главное окно")
+            reattach_action = QAction("🔁 Вернуть вкладку", self)
+            menu.addSeparator()
+            menu.addAction(reattach_action)
+        else:
+            reattach_action = None
 
         action = menu.exec(self.tabBar().mapToGlobal(position))
 
         if action == rename_tab_action:
-            new_title, ok = QInputDialog.getText(self, 'Переименовать вкладку', 'Введите новое название:')
-            if ok and new_title:
-                if index in self.pinned_tabs:
-                    self.setTabText(index, f"📌 {new_title}")
-                else:
-                    self.setTabText(index, new_title)
+            self.rename_tab(index)
         elif action == close_tab_action:
             self.close_tab(index)
         elif action == close_others_action:
@@ -230,20 +280,17 @@ class DynamicTabs(QTabWidget):
         elif action == reattach_action:
             self.reattach_tab(index)
 
-    def close_other_tabs(self, current_index):
+    def close_other_tabs(self, current_index: int):
         for i in reversed(range(self.count())):
             if i != current_index and i not in self.pinned_tabs:
                 self.removeTab(i)
 
-    def close_tabs_to_right(self, current_index):
+    def close_tabs_to_right(self, current_index: int):
         for i in reversed(range(current_index + 1, self.count())):
             if i not in self.pinned_tabs:
                 self.removeTab(i)
 
-    def toggle_pin_tab(self, index):
-        """
-        Закрепляет или открепляет вкладку.
-        """
+    def toggle_pin_tab(self, index: int):
         current_title = self.tabText(index).replace("📌 ", "")
         if index in self.pinned_tabs:
             self.pinned_tabs.remove(index)
@@ -252,10 +299,7 @@ class DynamicTabs(QTabWidget):
             self.pinned_tabs.add(index)
             self.setTabText(index, f"📌 {current_title}")
 
-    def reattach_tab(self, _index):
-        """
-        Возвращает вкладку обратно в основное окно.
-        """
+    def reattach_tab(self, _index: int):
         for window in self.detached_windows:
             if window.tabs_widget.count() > 0:
                 widget = window.tabs_widget.widget(0)
@@ -265,31 +309,3 @@ class DynamicTabs(QTabWidget):
                 if window.tabs_widget.count() == 0:
                     window.close()
                 return
-
-def handle_connection(self, os_name: str, pc_name: str, ip: str):
-    """
-    Обработка сигнала успешного подключения.
-    В зависимости от типа ОС добавляем новую вкладку с соответствующим интерфейсом.
-    """
-    try:
-        if os_name == "Windows":
-            self.open_windows_gui(pc_name, ip)
-        elif os_name == "Linux":
-            self.open_linux_gui(ip)
-        else:
-            QMessageBox.warning(self, "Ошибка", "Не удалось определить операционную систему.")
-    except Exception as e:
-        QMessageBox.critical(self, "Ошибка подключения", f"Не удалось установить сессию: {str(e)}")
-
-
-def open_windows_gui(self, hostname, ip):
-    try:
-        windows_widget = WindowsWindow(hostname, ip)
-        self.add_existing_tab(windows_widget, f"Windows: {hostname}")
-    except Exception as e:
-        QMessageBox.critical(self, "Ошибка подключения", f"Не удалось подключиться к {hostname}: {str(e)}")
-
-
-def open_linux_gui(self, ip):
-    linux_window = LinuxWindow(ip)
-    self.add_existing_tab(linux_window, f"Linux: {ip}")

@@ -1,14 +1,12 @@
-# pc_connection_block.py
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QGroupBox
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QGroupBox, QSizePolicy
+from PySide6.QtGui import QKeyEvent, QFont
 from PySide6.QtCore import Qt, Signal
 import socket
 from datetime import datetime
 
 from main_gui import utils
 from database import db_manager
-from notifications import Notification
-
+from notifications import Notification  # и функция set_notifications_enabled, если потребуется
 
 class IPLineEdit(QLineEdit):
     """
@@ -81,10 +79,19 @@ class IPLineEdit(QLineEdit):
         text = self.text().strip()
         if text == "" or utils.is_partial_ip(text):
             self.valid = True
+        elif not utils.is_valid_ip(text):  # Жёсткая проверка IP
+            self.valid = False
         else:
             self.valid = utils.is_valid_input(text)
-        self.setStyleSheet("border: 2px solid red;" if not self.valid else "")
 
+        if not self.valid:
+            # Если введённые данные невалидны, задаём красную рамку и светлый фон
+            self.setStyleSheet(
+                "border: 2px solid #ff5555; background: #ffefef; border-radius: 6px;"
+            )
+        else:
+            # Если всё в порядке, очищаем локальный стиль
+            self.setStyleSheet("")
 
 class PCConnectionBlock(QWidget):
     """
@@ -101,41 +108,43 @@ class PCConnectionBlock(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout()
-        connection_group = QGroupBox("Подключение к ПК")
-        group_layout = QVBoxLayout()
+        connection_group = QGroupBox("🔗 Подключение к ПК")
+        connection_group.setObjectName("groupBox")  # Применяем стили
 
-        ip_layout = QHBoxLayout()
-        ip_label = QLabel("IP-адрес:")
-        ip_layout.addWidget(ip_label)
+        group_layout = QHBoxLayout()
+        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_layout.setSpacing(8)
 
         self.ip_input = IPLineEdit()
-        ip_layout.addWidget(self.ip_input, 1)
+        self.ip_input.setObjectName("inputField")
+        self.ip_input.setPlaceholderText("💻 Введите IP или имя ПК")
+        self.ip_input.setFixedHeight(36)
 
-        self.connect_button = QPushButton("Подключиться")
-        ip_layout.addWidget(self.connect_button)
+        self.connect_button = QPushButton("🚀 Подключиться")
+        self.connect_button.setObjectName("actionButton")
+        self.connect_button.setFixedSize(150, 36)
+        self.connect_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.connect_button.setFont(QFont("Arial", 11, QFont.Bold))
         self.connect_button.clicked.connect(self.connect_to_pc)
 
-        group_layout.addLayout(ip_layout)
+        group_layout.addWidget(self.ip_input)
+        group_layout.addWidget(self.connect_button, alignment=Qt.AlignVCenter)
+
         connection_group.setLayout(group_layout)
         main_layout.addWidget(connection_group)
         self.setLayout(main_layout)
 
     def connect_to_pc(self):
-        """
-        Обрабатывает попытку подключения к ПК:
-        - Валидирует ввод
-        - Пытается получить IP-адрес (если введено имя)
-        - Проверяет доступность устройства
-        - Логирует подключение и обновляет связанные блоки
-        - Показывает уведомления об ошибках или успехе
-        """
-        # Блокируем кнопку, чтобы избежать повторных попыток
+        """Обрабатывает попытку подключения к ПК и показывает уведомления об успехе или ошибке."""
         self.connect_button.setEnabled(False)
         input_text = self.ip_input.text().strip()
 
         if not utils.is_valid_input(input_text):
-            self.ip_input.setStyleSheet("border: 2px solid red;")
-            Notification("Некорректный IP-адрес или имя ПК.", "error", duration=3000, parent=self).show_notification()
+            Notification("Ошибка подключения",
+                         "Некорректный IP-адрес или имя ПК.",
+                         "error",
+                         duration=3000,
+                         parent=self.window()).show_notification()
             self.connect_button.setEnabled(True)
             return
 
@@ -148,47 +157,54 @@ class PCConnectionBlock(QWidget):
             try:
                 ip_address = socket.gethostbyname(input_text)
             except socket.gaierror:
-                Notification("Не удалось разрешить имя ПК.", "error", duration=3000, parent=self).show_notification()
+                Notification("Ошибка подключения",
+                             "Не удалось разрешить имя ПК.",
+                             "error",
+                             duration=3000,
+                             parent=self.window()).show_notification()
                 self.connect_button.setEnabled(True)
                 return
 
         # Проверяем доступность устройства (пинг)
         reachable, _ = utils.ping_ip(ip_address)
         if not reachable:
-            Notification("Устройство не отвечает.", "error", duration=3000, parent=self).show_notification()
+            Notification("Ошибка подключения",
+                         "Устройство не отвечает.",
+                         "error",
+                         duration=3000,
+                         parent=self.window()).show_notification()
             self.connect_button.setEnabled(True)
             return
 
         # Определяем операционную систему устройства
         os_name = utils.detect_os(ip_address) if is_ip else "Windows"
-
         current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Добавляем запись в блок "Недавние подключения"
         if self.recent_connections_block:
             self.recent_connections_block.add_connection(ip_address, current_time_str)
 
-        # Записываем подключение в базу данных
         db_manager.add_connection(ip_address, os_name, datetime.now())
 
-        # Обновляем данные в блоке "Карта РМ", если он присутствует
         if self.wp_map_block:
-            # Можно заменить print() на вызов логгера, если он у вас настроен
             print("Обновляем таблицу 'Карта РМ' после подключения")
             self.wp_map_block.refresh_table()
 
-        # Уведомление об успешном подключении
-        Notification(f"Подключение к {ip_address} ({os_name}) успешно!", "success", duration=3000,
-                     parent=self).show_notification()
+        Notification("Подключение успешно",
+                     f"Подключение к {ip_address} ({os_name}) успешно!",
+                     "success",
+                     duration=3000,
+                     parent=self.window()).show_notification()
 
-        # Генерируем сигнал успешного подключения с данными:
         if os_name == "Windows" or not is_ip:
             pc_name = utils.get_pc_name(ip_address) if is_ip else input_text
             self.connection_successful.emit("Windows", pc_name or "Неизвестно", ip_address)
         elif os_name == "Linux/Unix":
             self.connection_successful.emit("Linux", "", ip_address)
         else:
-            Notification("Не удалось определить операционную систему.", "error", duration=3000,
-                         parent=self).show_notification()
+            Notification("Ошибка подключения",
+                         "Не удалось определить операционную систему.",
+                         "error",
+                         duration=3000,
+                         parent=self.window()).show_notification()
 
         self.connect_button.setEnabled(True)

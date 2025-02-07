@@ -1,14 +1,14 @@
 import logging
+import subprocess
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QLabel, QLineEdit,
     QPushButton, QListWidget, QGroupBox, QMessageBox, QListWidgetItem,
-    QMenu, QProgressBar
+    QMenu, QProgressBar, QFrame
 )
 from PySide6.QtCore import Qt, QTimer, QThreadPool, QRunnable, Signal, QObject
-from PySide6.QtGui import QIntValidator
+from PySide6.QtGui import QIntValidator, QFont
 from windows_gui.rdp_management import RDPManagerSync  # Обновленный RDPManagerSync с pypsexec
 from notifications import Notification  # Импортируем уведомления из отдельного файла
-import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -76,45 +76,55 @@ class RDPBlock(QWidget):
         self._load_initial_data()
 
     def _init_ui(self):
-        """Создает GUI-интерфейс для управления RDP."""
-        group_box = QGroupBox("🖥️ Управление RDP")
-        main_layout = QVBoxLayout()
+        """Создаёт интерфейс управления RDP."""
+        self.group_box = QGroupBox("🖥️ Управление RDP")
+        self.group_box.setObjectName("groupBox")  # 🎯 Стилизация из styles.py
+
+        main_layout = QVBoxLayout(self.group_box)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(10)
 
         # Индикатор загрузки
         self.progress = QProgressBar()
         self.progress.setVisible(False)
         main_layout.addWidget(self.progress)
 
-        # Чекбокс включения RDP
+        # Чекбокс "Включить RDP"
         self.checkbox_rdp = QCheckBox("✅ Включить RDP")
         main_layout.addWidget(self.checkbox_rdp)
 
-        # Изменение порта
+        # Блок ввода порта
         port_layout = QHBoxLayout()
-        port_layout.addWidget(QLabel("🔌 Порт:"))
+        port_layout.setSpacing(5)
+        port_label = QLabel("🔌 Порт:")
+        port_layout.addWidget(port_label)
         self.port_input = QLineEdit()
         self.port_input.setValidator(QIntValidator(1, 65535))
+        self.port_input.setFixedWidth(80)
         port_layout.addWidget(self.port_input)
         self.change_port_btn = QPushButton("Изменить")
         port_layout.addWidget(self.change_port_btn)
         main_layout.addLayout(port_layout)
 
         # Список пользователей
-        main_layout.addWidget(QLabel("👥 Пользователи RDP:"))
+        users_label = QLabel("👥 Пользователи RDP:")
+        main_layout.addWidget(users_label)
         self.users_list = QListWidget()
         self.users_list.setContextMenuPolicy(Qt.CustomContextMenu)
         main_layout.addWidget(self.users_list)
 
-        # Добавление пользователя
+        # Блок добавления пользователя
         user_layout = QHBoxLayout()
+        user_layout.setSpacing(5)
         self.user_input = QLineEdit()
         user_layout.addWidget(self.user_input)
         self.add_user_btn = QPushButton("Добавить")
         user_layout.addWidget(self.add_user_btn)
         main_layout.addLayout(user_layout)
 
-        # Кнопки обновления и применения настроек
+        # Блок кнопок "Обновить" и "Применить"
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
         self.refresh_btn = QPushButton("Обновить")
         self.apply_btn = QPushButton("Применить")
         button_layout.addWidget(self.refresh_btn)
@@ -123,11 +133,26 @@ class RDPBlock(QWidget):
 
         # Строка состояния
         self.status_label = QLabel()
+        self.status_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.status_label)
 
-        group_box.setLayout(main_layout)
+        self.group_box.setLayout(main_layout)
+
+        # Основной Layout
         layout = QVBoxLayout(self)
-        layout.addWidget(group_box)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        layout.addWidget(self.group_box)
+
+        # Разделитель под GroupBox
+        self.separator = QFrame()
+        self.separator.setObjectName("separator")  # 🎯 Стилизация из styles.py
+        self.separator.setFrameShape(QFrame.HLine)
+        self.separator.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(self.separator)
+
+        self.setLayout(layout)
+
 
     def _init_connections(self):
         """Привязывает элементы интерфейса к обработчикам событий."""
@@ -213,7 +238,6 @@ class RDPBlock(QWidget):
         logger.debug(f"_validate_user: stdout = {repr(result.stdout)}")
         logger.debug(f"_validate_user: stderr = {repr(result.stderr)}")
 
-        # Если stderr содержит "Не найдено имя пользователя", значит юзер НЕ существует
         if "Не найдено имя пользователя" in result.stderr or "NET HELPMSG 2221" in result.stderr:
             logger.warning(f"❌ Пользователь {user} НЕ найден в домене!")
             return False
@@ -228,26 +252,19 @@ class RDPBlock(QWidget):
             self._show_notification("Введите имя пользователя", "error")
             return
 
-        # Проверяем, существует ли пользователь в домене
         if not self._validate_user(user):
             self._show_notification("❌ Пользователь не найден в домене!", "error")
             return
 
-        # Получаем текущих пользователей
-        current_users = [self.users_list.item(i).text().lower().replace("ncc\\", "") for i in
-                         range(self.users_list.count())]
+        current_users = [self.users_list.item(i).text().lower().replace("ncc\\", "") for i in range(self.users_list.count())]
 
         if user.lower() in current_users:
             self._show_notification("⚠️ Пользователь уже добавлен!", "warning")
             return
 
-        # Добавляем пользователя БЕЗ ПЕРЕЗАПИСИ ВСЕГО СПИСКА!
         self._execute_operation(self.manager.add_user, username=user)
-
         self.user_input.clear()
         self._show_notification(f"✅ Пользователь {user} добавлен!", "success")
-
-        # Запрашиваем обновление списка пользователей после добавления
         QTimer.singleShot(1000, self._load_initial_data)
 
     def _apply_changes(self):
@@ -299,7 +316,6 @@ class RDPBlock(QWidget):
         worker.finished.connect(on_update_complete)
 
     def _update_ui(self, data: dict):
-        """Обновляет элементы интерфейса на основе полученных данных."""
         logger.debug(f"Обновление UI с данными: {data}")
         self._show_loading(False)
 
@@ -309,14 +325,23 @@ class RDPBlock(QWidget):
             self.users_list.clear()
             for user in data.get('users', []):
                 item = QListWidgetItem(user)
-                item.setFlags(item.flags() | Qt.ItemIsEditable)
+                # Устанавливаем обычный (не жирный) шрифт для пользователя
+                font = QFont("Arial", 10)
+                font.setBold(False)
+                item.setFont(font)
+                # Убираем возможность редактирования элемента
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.users_list.addItem(item)
 
-        self.status_label.setText("✅ Данные обновлены")
+        # Очищаем строку состояния (без текста "Данные обновлены")
+        self.status_label.setText("")
+
         if not self.auto_refresh:
             self._show_notification("Данные обновлены", "success")
         self.auto_refresh = False
         self.refresh_scheduled = False
+
+
 
     def _show_loading(self, visible: bool):
         """Отображает или скрывает индикатор загрузки и блокирует элементы управления."""
@@ -329,5 +354,37 @@ class RDPBlock(QWidget):
         """Обрабатывает ошибки, снимает блокировку с интерфейса и выводит уведомление."""
         logger.error(f"Ошибка: {message}")
         self._show_loading(False)
-        self._show_notification(message, "error")
-        self.status_label.setText(f"❌ Ошибка: {message}")
+
+        error_mapping = {
+            "ERROR_ACCESS_DENIED": (
+                "Ошибка доступа.\n"
+                "Проверьте, что у вас есть административные права на удалённом компьютере.\n"
+                "Возможно, учетные данные неверны или настройки UAC ограничивают выполнение операций."
+            ),
+            "unsupported operand type(s) for +=: 'NoneType' and 'bytes'": (
+                "Ошибка при обработке данных службы.\n"
+                "Возможно, служба не была создана из-за недостатка прав. Попробуйте проверить "
+                "учетные данные и обновить библиотеку pypsexec."
+            )
+        }
+
+        friendly_message = None
+        for key, user_message in error_mapping.items():
+            if key in message:
+                friendly_message = user_message
+                break
+        if not friendly_message:
+            friendly_message = message
+
+        self.status_label.setText(f"❌ Ошибка: {friendly_message}")
+
+        msg_box = QMessageBox(self)
+        base_font = QFont("Arial", 10)
+        msg_box.setFont(base_font)
+        msg_box.setIcon(QMessageBox.Critical)
+        msg_box.setWindowTitle("Ошибка")
+        msg_box.setText("Произошла ошибка при выполнении операции:")
+        msg_box.setInformativeText(friendly_message)
+        msg_box.exec_()
+
+        self._show_notification(friendly_message, "error")
